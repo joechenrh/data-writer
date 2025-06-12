@@ -7,8 +7,8 @@ import (
 	"math/rand"
 	"time"
 
+	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/google/uuid"
-	"github.com/joechenrh/arrow-go/v18/parquet"
 	"github.com/pingcap/tidb/pkg/util/hack"
 )
 
