@@ -1,0 +1,35 @@
+[common]
+path = ""
+
+# Number of subfolder, if zero, not split into subfolder
+# folders = 4
+
+# File prefix, file will be named as prefix.fileno.[csv/parquet]
+prefix = "test"
+
+# Total number of files 
+start_fileno = 0
+end_fileno = 1
+
+# Rows in each file
+rows = 4000
+
+format = "CSV"
+
+[parquet]
+row_groups = 1
+page_size_kb = 1024
+
+[csv]
+base64 = true
+
+# [s3]
+# region = "11"
+# access_key = "11"
+# secret_key = "11"
+# provider = "11"
+# endpoint = "11"
+# force = true
+
+# [gcs]
+# credential = "11"
