@@ -13,8 +13,8 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/file"
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/apache/arrow/go/arrow/memory"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pkg/errors"
 )
 
 type writeWrapper struct {
@@ -59,7 +59,7 @@ type ParquetWriter struct {
 	buffer *memory.Buffer
 }
 
-func (pw *ParquetWriter) getWriter(w io.Writer, dataPageSize int64) *file.Writer {
+func (pw *ParquetWriter) getWriter(w io.Writer, dataPageSize int64) (*file.Writer, error) {
 	fields := make([]schema.Node, pw.numCols)
 	opts := []parquet.WriterProperty{parquet.WithDataPageSize(dataPageSize)}
 	for i := range pw.numCols {
@@ -73,13 +73,16 @@ func (pw *ParquetWriter) getWriter(w io.Writer, dataPageSize int64) *file.Writer
 		opts = append(opts, parquet.WithDictionaryFor(colName, true))
 		opts = append(opts, parquet.WithCompressionFor(colName, compress.Codecs.Snappy))
 	}
-	node, err := schema.NewGroupNode("schema", parquet.Repetitions.Required, fields, -1)
-	AssertTrue(err)
 
-	return file.NewParquetWriter(w, node, file.WithWriterProps(parquet.NewWriterProperties(opts...)))
+	node, err := schema.NewGroupNode("schema", parquet.Repetitions.Required, fields, -1)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return file.NewParquetWriter(w, node, file.WithWriterProps(parquet.NewWriterProperties(opts...))), nil
 }
 
-func (pw *ParquetWriter) Init(w io.Writer, rows, rowGroups int, dataPageSize int64, specs []ColumnSpec) {
+func (pw *ParquetWriter) Init(w io.Writer, rows, rowGroups int, dataPageSize int64, specs []ColumnSpec) error {
 	source := rand.NewSource(time.Now().UnixNano() + int64(rand.Intn(65536)))
 	pw.rng = rand.New(source)
 
@@ -91,11 +94,16 @@ func (pw *ParquetWriter) Init(w io.Writer, rows, rowGroups int, dataPageSize int
 		panic("rowsPerRowGroup must be divisible by 100")
 	}
 
+	var err error
+
 	pw.specs = specs
 	pw.defLevels = make([][]int16, len(specs))
 	pw.valueBufs = make([]any, len(specs))
 	pw.buffer = memory.NewResizableBuffer(memory.DefaultAllocator)
-	pw.w = pw.getWriter(w, dataPageSize)
+	pw.w, err = pw.getWriter(w, dataPageSize)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	for i := range len(specs) {
 		pw.defLevels[i] = make([]int16, 100)
@@ -110,6 +118,8 @@ func (pw *ParquetWriter) Init(w io.Writer, rows, rowGroups int, dataPageSize int
 			panic("unimplemented")
 		}
 	}
+
+	return nil
 }
 
 func (pw *ParquetWriter) Close() {
@@ -195,9 +205,11 @@ func generateParquetFile(
 		return fmt.Errorf("numRows %d is not divisible by numRowGroups %d", numRows, rowGroups)
 	}
 
-	pw.Init(&wrapper, numRows, rowGroups, int64(cfg.Parquet.PageSizeKB)<<10, specs)
+	if err := pw.Init(&wrapper, numRows, rowGroups, int64(cfg.Parquet.PageSizeKB)<<10, specs); err != nil {
+		return errors.Trace(err)
+	}
 	if err := pw.Write(startRowID); err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	pw.Close()
 	return nil
