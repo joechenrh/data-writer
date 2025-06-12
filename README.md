@@ -1,4 +1,4 @@
-## parquet-writer
+## data-writer
 A self-use tool to generate parquet/CSV
 
 ## About this tool
