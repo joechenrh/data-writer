@@ -8,11 +8,11 @@ import (
 
 	"math/rand"
 
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/compress"
+	"github.com/apache/arrow-go/v18/parquet/file"
+	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/apache/arrow/go/arrow/memory"
-	"github.com/joechenrh/arrow-go/v18/parquet"
-	"github.com/joechenrh/arrow-go/v18/parquet/compress"
-	"github.com/joechenrh/arrow-go/v18/parquet/file"
-	"github.com/joechenrh/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pkg/errors"
 )
