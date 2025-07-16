@@ -21,27 +21,20 @@ type writeWrapper struct {
 	Writer storage.ExternalFileWriter
 }
 
-func (self *writeWrapper) Seek(offset int64, pos int) (int64, error) {
+func (ww *writeWrapper) Seek(offset int64, pos int) (int64, error) {
 	return 0, nil
 }
 
-func (self *writeWrapper) Read(b []byte) (int, error) {
+func (ww *writeWrapper) Read(b []byte) (int, error) {
 	return 0, nil
 }
 
-func (self *writeWrapper) Write(b []byte) (int, error) {
-	return self.Writer.Write(context.Background(), b)
+func (ww *writeWrapper) Write(b []byte) (int, error) {
+	return ww.Writer.Write(context.Background(), b)
 }
 
-func (self *writeWrapper) Close() error {
+func (ww *writeWrapper) Close() error {
 	return nil
-}
-
-var typeToParquetTypeMap = map[string]parquet.Type{
-	"int32":  parquet.Types.Int32,
-	"int64":  parquet.Types.Int64,
-	"double": parquet.Types.Double,
-	"string": parquet.Types.ByteArray,
 }
 
 type ParquetWriter struct {
@@ -62,13 +55,14 @@ type ParquetWriter struct {
 func (pw *ParquetWriter) getWriter(w io.Writer, dataPageSize int64) (*file.Writer, error) {
 	fields := make([]schema.Node, pw.numCols)
 	opts := []parquet.WriterProperty{parquet.WithDataPageSize(dataPageSize)}
-	for i := range pw.numCols {
-		colName := pw.specs[i].OrigName
-		fields[i], _ = schema.NewPrimitiveNode(
+	for i, spec := range pw.specs {
+		colName := spec.OrigName
+		fields[i], _ = schema.NewPrimitiveNodeConverted(
 			colName,
 			parquet.Repetitions.Optional,
-			typeToParquetTypeMap[pw.specs[i].ParquetType],
-			-1, int32(pw.specs[i].length),
+			spec.Type, spec.Converted,
+			spec.TypeLen, spec.Precision, spec.Scale,
+			-1,
 		)
 		opts = append(opts, parquet.WithDictionaryFor(colName, true))
 		opts = append(opts, parquet.WithCompressionFor(colName, compress.Codecs.Snappy))
@@ -107,12 +101,14 @@ func (pw *ParquetWriter) Init(w io.Writer, rows, rowGroups int, dataPageSize int
 
 	for i := range len(specs) {
 		pw.defLevels[i] = make([]int16, 100)
-		switch specs[i].ParquetType {
-		case "int64":
+		switch specs[i].Type {
+		case parquet.Types.Int32:
+			pw.valueBufs[i] = make([]int32, 100)
+		case parquet.Types.Int64:
 			pw.valueBufs[i] = make([]int64, 100)
-		case "float64":
+		case parquet.Types.Float:
 			pw.valueBufs[i] = make([]float64, 100)
-		case "string":
+		case parquet.Types.ByteArray:
 			pw.valueBufs[i] = make([]parquet.ByteArray, 100)
 		default:
 			panic("unimplemented")
@@ -144,25 +140,39 @@ func (pw *ParquetWriter) writeNextColumn(rgw file.SerialRowGroupWriter, rowIDSta
 	)
 
 	for range rounds {
-		switch w := cw.(type) {
-		case *file.Int64ColumnChunkWriter:
+		switch spec.SQLType {
+		case "bigint":
 			buf := valueBuffer.([]int64)
-			spec.generateBatchInt64(rowIDStart, buf, defLevels, pw.rng)
+			spec.generateInt64Parquet(rowIDStart, buf, defLevels, pw.rng)
+			w, _ := cw.(*file.Int64ColumnChunkWriter)
 			num, err = w.WriteBatch(buf, defLevels, nil)
-		case *file.Float64ColumnChunkWriter:
+		case "int", "mediumint", "smallint", "tinyint":
+			buf := valueBuffer.([]int32)
+			spec.generateInt32Parquet(rowIDStart, buf, defLevels, pw.rng)
+			w, _ := cw.(*file.Int32ColumnChunkWriter)
+			num, err = w.WriteBatch(buf, defLevels, nil)
+		case "float":
+			buf := valueBuffer.([]float32)
+			spec.generateFloat32Parquet(rowIDStart, buf, defLevels, pw.rng)
+			w, _ := cw.(*file.Float32ColumnChunkWriter)
+			num, err = w.WriteBatch(buf, defLevels, nil)
+		case "double":
 			buf := valueBuffer.([]float64)
-			spec.generateBatchFloat(rowIDStart, buf, defLevels, pw.rng)
+			spec.generateFloat64Parquet(rowIDStart, buf, defLevels, pw.rng)
+			w, _ := cw.(*file.Float64ColumnChunkWriter)
 			num, err = w.WriteBatch(buf, defLevels, nil)
-		case *file.ByteArrayColumnChunkWriter:
+		case "varchar", "char":
 			buf := valueBuffer.([]parquet.ByteArray)
-			if spec.SQLType == "timestamp" {
-				spec.generateBatchTimestamp(buf, defLevels, pw.rng)
-			} else {
-				spec.generateBatchString(rowIDStart, buf, defLevels, pw.rng)
-			}
+			spec.generateStringParquet(rowIDStart, buf, defLevels, pw.rng)
+			w, _ := cw.(*file.ByteArrayColumnChunkWriter)
+			num, err = w.WriteBatch(buf, defLevels, nil)
+		case "timestamp":
+			buf := valueBuffer.([]int64)
+			spec.generateTimestampParquet(buf, defLevels, pw.rng)
+			w, _ := cw.(*file.Int64ColumnChunkWriter)
 			num, err = w.WriteBatch(buf, defLevels, nil)
 		default:
-			return 0, errors.Errorf("unsupported column writer type: %T", w)
+			return 0, errors.Errorf("unsupported column writer type: %s", spec.SQLType)
 		}
 
 		written += num

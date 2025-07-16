@@ -13,35 +13,6 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-type NumericOrder int
-
-const (
-	NumericNoOrder NumericOrder = iota
-	NumericTotalOrder
-	NumericPartialOrder
-	NumericRandomOrder
-)
-
-type ColumnSpec struct {
-	// For string type, it's the maximum length
-	// For numeric type, it's the maximum number of digits.
-	length    int
-	IsUnique  bool
-	IsPrimary bool
-
-	OrigName    string
-	SQLType     string
-	ParquetType string
-
-	NullPercent int
-
-	// Below are used for numeric types
-	Order  NumericOrder
-	Mean   int
-	StdDev int
-	Signed bool
-}
-
 func DeleteAllFiles(cfg Config) error {
 	var fileNames []string
 	store, err := GetStore(cfg)
@@ -120,6 +91,8 @@ func GenerateFiles(cfg Config) error {
 
 	specs := getSpecFromSQL(*sqlPath)
 	ctx := context.Background()
+
+	fmt.Print("Generating files... ", specs)
 
 	eg, _ := errgroup.WithContext(ctx)
 	eg.SetLimit(*threads)
