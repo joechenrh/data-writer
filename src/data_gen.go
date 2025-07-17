@@ -41,12 +41,12 @@ func (c *ColumnSpec) generateGaussianInt(rng *rand.Rand) int {
 	return randomInt
 }
 
-func (c *ColumnSpec) generateRandomInt() int {
+func (c *ColumnSpec) generateRandomInt(rng *rand.Rand) int {
 	if c.TypeLen == 64 {
-		return rand.Int()
+		return rng.Int()
 	}
 
-	v := rand.Intn(1 << c.TypeLen)
+	v := rng.Intn(1 << c.TypeLen)
 	if c.Signed {
 		v -= 1 << (c.TypeLen - 1)
 	}
@@ -65,7 +65,7 @@ func (c *ColumnSpec) generateInt(rowID int, rng *rand.Rand) int {
 
 	switch c.Order {
 	case NumericNoOrder:
-		return c.generateRandomInt()
+		return c.generateRandomInt(rng)
 	case NumericTotalOrder:
 		return rowID
 	case NumericPartialOrder:
@@ -128,20 +128,6 @@ func (c *ColumnSpec) generateRandomTimestamp() string {
 	timestamp := randomTime.Format(time.RFC3339)
 
 	return timestamp
-}
-
-func (c *ColumnSpec) generateRandomTimestampAsInt64() int64 {
-	// Get the current time
-	now := time.Now()
-
-	// Calculate the time one year ago
-	oneYearAgo := now.AddDate(-1, 0, 0)
-
-	// Generate a random duration between 0 and one year
-	randomDuration := time.Duration(rand.Int63n(int64(now.Sub(oneYearAgo))))
-
-	// Add the random duration to one year ago to get a random time within the last year
-	return oneYearAgo.Add(randomDuration).Unix()
 }
 
 func (c *ColumnSpec) generate(rowID int, rng *rand.Rand) (any, int16) {
@@ -220,7 +206,19 @@ func (c *ColumnSpec) generateTimestampParquet(out []int64, defLevel []int16, rng
 			defLevel[i] = 0
 		} else {
 			defLevel[i] = 1
-			out[i] = c.generateRandomTimestampAsInt64()
+			out[i] = rng.Int63() % 1576800000000000000 // Random timestamp in the range of 0 to 50 years
+		}
+	}
+}
+
+func (c *ColumnSpec) generateDateParquet(out []int32, defLevel []int16, rng *rand.Rand) {
+	nullMap := c.generateBatchNull(len(out), rng)
+	for i := range len(out) {
+		if nullMap[i] {
+			defLevel[i] = 0
+		} else {
+			defLevel[i] = 1
+			out[i] = rng.Int31() & 16383
 		}
 	}
 }

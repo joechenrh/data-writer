@@ -9,8 +9,8 @@ require (
 	github.com/apache/arrow-go/v18 v18.3.0
 	github.com/apache/arrow/go/arrow v0.0.0-20211112161151-bc219186db40
 	github.com/google/uuid v1.6.0
+	github.com/pingcap/errors v0.11.5-0.20240318064555-6bd07397691f
 	github.com/pingcap/tidb v1.1.0-beta.0.20241119124618-50b5cd27d413
-	github.com/pkg/errors v0.9.1
 	github.com/schollz/progressbar/v3 v3.18.0
 	golang.org/x/sync v0.13.0
 )
@@ -83,7 +83,6 @@ require (
 	github.com/opentracing/opentracing-go v1.2.0 // indirect
 	github.com/petermattis/goid v0.0.0-20240813172612-4fcff4a6cae7 // indirect
 	github.com/pierrec/lz4/v4 v4.1.22 // indirect
-	github.com/pingcap/errors v0.11.5-0.20240318064555-6bd07397691f // indirect
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86 // indirect
 	github.com/pingcap/kvproto v0.0.0-20240924080114-4a3e17f5e62d // indirect
 	github.com/pingcap/log v1.1.1-0.20240314023424-862ccc32f18d // indirect
@@ -91,6 +90,7 @@ require (
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20241119124618-50b5cd27d413 // indirect
 	github.com/pingcap/tipb v0.0.0-20241022082558-0607513e7fa4 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
+	github.com/pkg/errors v0.9.1 // indirect
 	github.com/power-devops/perfstat v0.0.0-20221212215047-62379fc7944b // indirect
 	github.com/prometheus/client_golang v1.20.5 // indirect
 	github.com/prometheus/client_model v0.6.1 // indirect

@@ -83,18 +83,18 @@ var DefaultSpecs = map[string]ColumnSpec{
 		Type:      parquet.Types.Int64,
 		Converted: schema.ConvertedTypes.Decimal,
 	},
-	"timestamp": {
-		SQLType:   "timestamp",
-		Type:      parquet.Types.Int64,
-		Converted: schema.ConvertedTypes.TimestampMicros,
-	},
 	"date": {
 		SQLType:   "date",
 		Type:      parquet.Types.Int32,
 		Converted: schema.ConvertedTypes.Date,
 	},
-	"datetime": {
+	"timestamp": {
 		SQLType:   "timestamp",
+		Type:      parquet.Types.Int64,
+		Converted: schema.ConvertedTypes.TimestampMicros,
+	},
+	"datetime": {
+		SQLType:   "datetime",
 		Type:      parquet.Types.Int64,
 		Converted: schema.ConvertedTypes.TimestampMicros,
 	},
@@ -213,11 +213,12 @@ func getSpecFromSQL(sqlPath string) []ColumnSpec {
 	specs := make([]ColumnSpec, 0)
 	for _, line := range lines[1 : len(lines)-1] {
 		line = strings.ReplaceAll(line, "`", "")
-		splitted := strings.Split(line, "--")
+		splitted := strings.Split(line, "/*")
 
 		comment := ""
 		if len(splitted) > 1 {
 			comment = strings.ReplaceAll(splitted[1], " ", "")
+			comment = strings.TrimSuffix(comment, "*/")
 		}
 
 		parts := strings.Split(strings.TrimSpace(splitted[0]), " ")

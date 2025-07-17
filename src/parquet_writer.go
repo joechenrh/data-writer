@@ -166,7 +166,12 @@ func (pw *ParquetWriter) writeNextColumn(rgw file.SerialRowGroupWriter, rowIDSta
 			spec.generateStringParquet(rowIDStart, buf, defLevels, pw.rng)
 			w, _ := cw.(*file.ByteArrayColumnChunkWriter)
 			num, err = w.WriteBatch(buf, defLevels, nil)
-		case "timestamp":
+		case "date":
+			buf := valueBuffer.([]int32)
+			spec.generateDateParquet(buf, defLevels, pw.rng)
+			w, _ := cw.(*file.Int32ColumnChunkWriter)
+			num, err = w.WriteBatch(buf, defLevels, nil)
+		case "timestamp", "datetime":
 			buf := valueBuffer.([]int64)
 			spec.generateTimestampParquet(buf, defLevels, pw.rng)
 			w, _ := cw.(*file.Int64ColumnChunkWriter)
