@@ -17,6 +17,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 )
 
+const BatchSize = 50
+
 type writeWrapper struct {
 	Writer storage.ExternalFileWriter
 }
@@ -84,8 +86,8 @@ func (pw *ParquetWriter) Init(w io.Writer, rows, rowGroups int, dataPageSize int
 	pw.numRowGroups = rowGroups
 	pw.rowsPerRowGroup = rows / rowGroups
 
-	if pw.rowsPerRowGroup%100 != 0 {
-		panic("rowsPerRowGroup must be divisible by 100")
+	if pw.rowsPerRowGroup%BatchSize != 0 {
+		panic("rowsPerRowGroup must be divisible by BatchSize")
 	}
 
 	var err error
@@ -100,16 +102,18 @@ func (pw *ParquetWriter) Init(w io.Writer, rows, rowGroups int, dataPageSize int
 	}
 
 	for i := range len(specs) {
-		pw.defLevels[i] = make([]int16, 100)
+		pw.defLevels[i] = make([]int16, BatchSize)
 		switch specs[i].Type {
 		case parquet.Types.Int32:
-			pw.valueBufs[i] = make([]int32, 100)
+			pw.valueBufs[i] = make([]int32, BatchSize)
 		case parquet.Types.Int64:
-			pw.valueBufs[i] = make([]int64, 100)
+			pw.valueBufs[i] = make([]int64, BatchSize)
+		case parquet.Types.Double:
+			pw.valueBufs[i] = make([]float64, BatchSize)
 		case parquet.Types.Float:
-			pw.valueBufs[i] = make([]float64, 100)
+			pw.valueBufs[i] = make([]float32, BatchSize)
 		case parquet.Types.ByteArray:
-			pw.valueBufs[i] = make([]parquet.ByteArray, 100)
+			pw.valueBufs[i] = make([]parquet.ByteArray, BatchSize)
 		default:
 			panic("unimplemented")
 		}
@@ -161,7 +165,7 @@ func (pw *ParquetWriter) writeNextColumn(rgw file.SerialRowGroupWriter, rowIDSta
 			spec.generateFloat64Parquet(rowIDStart, buf, defLevels, pw.rng)
 			w, _ := cw.(*file.Float64ColumnChunkWriter)
 			num, err = w.WriteBatch(buf, defLevels, nil)
-		case "varchar", "char":
+		case "varchar", "char", "blob":
 			buf := valueBuffer.([]parquet.ByteArray)
 			spec.generateStringParquet(rowIDStart, buf, defLevels, pw.rng)
 			w, _ := cw.(*file.ByteArrayColumnChunkWriter)

@@ -182,7 +182,7 @@ func (c *ColumnSpec) generateFloat64Parquet(rowID int, out []float64, defLevel [
 			defLevel[i] = 0
 		} else {
 			defLevel[i] = 1
-			out[i] = float64(c.generateInt(rowID, rng))
+			out[i] = float64(c.generateInt(rowID, rng)) + 0.1
 		}
 	}
 }
@@ -194,7 +194,7 @@ func (c *ColumnSpec) generateFloat32Parquet(rowID int, out []float32, defLevel [
 			defLevel[i] = 0
 		} else {
 			defLevel[i] = 1
-			out[i] = float32(c.generateInt(rowID, rng))
+			out[i] = float32(c.generateInt(rowID, rng)) + 0.1
 		}
 	}
 }
@@ -206,7 +206,7 @@ func (c *ColumnSpec) generateTimestampParquet(out []int64, defLevel []int16, rng
 			defLevel[i] = 0
 		} else {
 			defLevel[i] = 1
-			out[i] = rng.Int63() % 1576800000000000000 // Random timestamp in the range of 0 to 50 years
+			out[i] = rng.Int63() % 1576800000000000 // Random timestamp in the range of 0 to 50 years
 		}
 	}
 }
@@ -226,7 +226,10 @@ func (c *ColumnSpec) generateDateParquet(out []int32, defLevel []int16, rng *ran
 func (c *ColumnSpec) generateStringParquet(_ int, out []parquet.ByteArray, defLevel []int16, rng *rand.Rand) {
 	nullMap := c.generateBatchNull(len(out), rng)
 
-	slen := rng.Intn(c.TypeLen-1) + 1
+	lower := c.TypeLen * 3 / 4
+	upper := c.TypeLen
+
+	slen := rng.Intn(upper-lower) + lower
 	buf := make([]byte, slen*len(out))
 	rng.Read(buf)
 	for i := range buf {

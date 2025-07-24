@@ -142,14 +142,21 @@ var DefaultSpecs = map[string]ColumnSpec{
 		SQLType:   "float",
 		Type:      parquet.Types.Float,
 		Converted: schema.ConvertedTypes.None,
+		TypeLen:   32,
 	},
 	"double": {
 		SQLType:   "double",
 		Type:      parquet.Types.Double,
 		Converted: schema.ConvertedTypes.None,
+		TypeLen:   32,
 	},
 	"varchar": {
 		SQLType:   "varchar",
+		Type:      parquet.Types.ByteArray,
+		Converted: schema.ConvertedTypes.None,
+	},
+	"blob": {
+		SQLType:   "blob",
 		Type:      parquet.Types.ByteArray,
 		Converted: schema.ConvertedTypes.None,
 	},
