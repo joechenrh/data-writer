@@ -15,7 +15,7 @@ func String2Bytes(s string) []byte {
 	return unsafe.Slice(unsafe.StringData(s), len(s))
 }
 
-func generateCSVRow(specs []ColumnSpec, rowID int, withBase64 bool, rng *rand.Rand) string {
+func generateCSVRow(specs []*ColumnSpec, rowID int, withBase64 bool, rng *rand.Rand) string {
 	var sb strings.Builder
 	for i, spec := range specs {
 		s := generateSingleField(rowID, spec, rng)
@@ -34,7 +34,7 @@ func generateCSVRow(specs []ColumnSpec, rowID int, withBase64 bool, rng *rand.Ra
 func generateCSVFile(
 	writer storage.ExternalFileWriter,
 	fileNo int,
-	specs []ColumnSpec,
+	specs []*ColumnSpec,
 	cfg Config,
 ) error {
 	// Add some random number to prevent multiple goroutines start simutaneously

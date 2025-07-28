@@ -89,7 +89,10 @@ func GenerateFiles(cfg Config) error {
 	//nolint: errcheck
 	defer store.Close()
 
-	specs := getSpecFromSQL(*sqlPath)
+	specs, err := getSpecFromSQL(*sqlPath)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	ctx := context.Background()
 
 	fmt.Print("Generating files... ", specs)

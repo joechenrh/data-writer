@@ -43,7 +43,7 @@ type ParquetWriter struct {
 	w         *file.Writer
 	defLevels [][]int16
 	valueBufs []any
-	specs     []ColumnSpec
+	specs     []*ColumnSpec
 
 	rng *rand.Rand
 
@@ -78,7 +78,7 @@ func (pw *ParquetWriter) getWriter(w io.Writer, dataPageSize int64) (*file.Write
 	return file.NewParquetWriter(w, node, file.WithWriterProps(parquet.NewWriterProperties(opts...))), nil
 }
 
-func (pw *ParquetWriter) Init(w io.Writer, rows, rowGroups int, dataPageSize int64, specs []ColumnSpec) error {
+func (pw *ParquetWriter) Init(w io.Writer, rows, rowGroups int, dataPageSize int64, specs []*ColumnSpec) error {
 	source := rand.NewSource(time.Now().UnixNano() + int64(rand.Intn(65536)))
 	pw.rng = rand.New(source)
 
@@ -211,7 +211,7 @@ func (pw *ParquetWriter) Write(startRowID int) error {
 func generateParquetFile(
 	writer storage.ExternalFileWriter,
 	fileNo int,
-	specs []ColumnSpec,
+	specs []*ColumnSpec,
 	cfg Config,
 ) error {
 	wrapper := writeWrapper{Writer: writer}

@@ -21,7 +21,7 @@ var (
 var (
 	writtenFiles atomic.Int32
 	suffix       string
-	genFunc      func(storage.ExternalFileWriter, int, []ColumnSpec, Config) error
+	genFunc      func(storage.ExternalFileWriter, int, []*ColumnSpec, Config) error
 )
 
 func main() {

@@ -1,14 +1,21 @@
 package main
 
 import (
-	"bufio"
-	"log"
+	"errors"
 	"os"
 	"strconv"
 	"strings"
 
 	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/schema"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	_ "github.com/pingcap/tidb/pkg/planner/core" // to setup expression.EvalSimpleAst for in core_init
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/mock"
 )
 
 // validChar is a set of characters used to generate random strings.
@@ -38,7 +45,6 @@ type ColumnSpec struct {
 	// Below are used for generate specified data
 	NullPercent int
 	IsUnique    bool
-	IsPrimary   bool
 	Order       NumericOrder
 	Mean        int
 	StdDev      int
@@ -77,172 +83,163 @@ func (c *ColumnSpec) parseComment(comment string) {
 	}
 }
 
-var DefaultSpecs = map[string]ColumnSpec{
-	"decimal": {
+var DefaultSpecs = map[byte]*ColumnSpec{
+	mysql.TypeNewDecimal: {
 		SQLType:   "decimal",
 		Type:      parquet.Types.Int64,
 		Converted: schema.ConvertedTypes.Decimal,
 	},
-	"date": {
+	mysql.TypeDate: {
 		SQLType:   "date",
 		Type:      parquet.Types.Int32,
 		Converted: schema.ConvertedTypes.Date,
 	},
-	"timestamp": {
+	mysql.TypeTimestamp: {
 		SQLType:   "timestamp",
 		Type:      parquet.Types.Int64,
 		Converted: schema.ConvertedTypes.TimestampMicros,
 	},
-	"datetime": {
+	mysql.TypeDatetime: {
 		SQLType:   "datetime",
 		Type:      parquet.Types.Int64,
 		Converted: schema.ConvertedTypes.TimestampMicros,
 	},
-	"bool": {
-		SQLType:   "bool",
-		Type:      parquet.Types.Boolean,
-		Converted: schema.ConvertedTypes.None,
-	},
-	"tinyint": {
+	mysql.TypeTiny: {
 		SQLType:   "tinyint",
 		Type:      parquet.Types.Int32,
 		Converted: schema.ConvertedTypes.None,
 		TypeLen:   8,
 		Signed:    true,
 	},
-	"smallint": {
+	mysql.TypeShort: {
 		SQLType:   "smallint",
 		Type:      parquet.Types.Int32,
 		Converted: schema.ConvertedTypes.None,
-		TypeLen:   8,
+		TypeLen:   16,
 		Signed:    true,
 	},
-	"mediumint": {
+	mysql.TypeInt24: {
 		SQLType:   "mediumint",
 		Type:      parquet.Types.Int32,
 		Converted: schema.ConvertedTypes.None,
-		TypeLen:   8,
+		TypeLen:   24,
 		Signed:    true,
 	},
-	"int": {
+	mysql.TypeLong: {
 		SQLType:   "int",
 		Type:      parquet.Types.Int32,
 		Converted: schema.ConvertedTypes.None,
 		TypeLen:   32,
 		Signed:    true,
 	},
-	"bigint": {
+	mysql.TypeLonglong: {
 		SQLType:   "bigint",
 		Type:      parquet.Types.Int64,
 		Converted: schema.ConvertedTypes.None,
 		TypeLen:   64,
 		Signed:    true,
 	},
-	"float": {
+	mysql.TypeFloat: {
 		SQLType:   "float",
 		Type:      parquet.Types.Float,
 		Converted: schema.ConvertedTypes.None,
 		TypeLen:   32,
 	},
-	"double": {
+	mysql.TypeDouble: {
 		SQLType:   "double",
 		Type:      parquet.Types.Double,
 		Converted: schema.ConvertedTypes.None,
 		TypeLen:   32,
 	},
-	"varchar": {
+	mysql.TypeVarchar: {
 		SQLType:   "varchar",
 		Type:      parquet.Types.ByteArray,
 		Converted: schema.ConvertedTypes.None,
 	},
-	"blob": {
+	mysql.TypeBlob: {
 		SQLType:   "blob",
 		Type:      parquet.Types.ByteArray,
 		Converted: schema.ConvertedTypes.None,
 	},
-	"char": {
+	mysql.TypeString: {
 		SQLType:   "char",
 		Type:      parquet.Types.ByteArray,
 		Converted: schema.ConvertedTypes.None,
 	},
 }
 
-func getBasicSpec(sqlTypeString string) ColumnSpec {
-	var (
-		SQLType     = sqlTypeString
-		fieldLength = -1
-		precision   int
-		scale       int
-	)
-
-	if strings.Contains(sqlTypeString, "(") && strings.Contains(sqlTypeString, ")") {
-		start, end := strings.Index(sqlTypeString, "("), strings.Index(sqlTypeString, ")")
-		SQLType = sqlTypeString[:start]
-		if strings.Contains(sqlTypeString, ",") {
-			// For types like decimal(10,2)
-			parts := strings.Split(sqlTypeString[start+1:end], ",")
-			precision, _ = strconv.Atoi(parts[0])
-			scale, _ = strconv.Atoi(parts[1])
-		} else {
-			// For types like varchar(255)
-			fieldLength, _ = strconv.Atoi(sqlTypeString[start+1 : end])
-		}
-	}
-
-	SQLType = strings.ToLower(SQLType)
-	spec := DefaultSpecs[SQLType]
-	if fieldLength != -1 {
-		spec.TypeLen = fieldLength
-	}
-	spec.Precision = precision
-	spec.Scale = scale
-	return spec
+func (c *ColumnSpec) Clone() *ColumnSpec {
+	clone := *c
+	return &clone
 }
 
-func getSpecFromSQL(sqlPath string) []ColumnSpec {
-	file, err := os.Open(sqlPath)
+func getTableInfoBySQL(createTableSQL string) (table *model.TableInfo, err error) {
+	p := parser.New()
+	p.SetSQLMode(mysql.ModeNone)
+
+	stmt, err := p.ParseOneStmt(createTableSQL, "", "")
 	if err != nil {
-		log.Fatalf("failed to open file: %v", err)
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	lines := []string{}
-	for scanner.Scan() {
-		line := scanner.Text()
-		lines = append(lines, line)
+		return nil, err
 	}
 
-	if err := scanner.Err(); err != nil {
-		log.Fatalf("error reading file: %v", err)
+	metaBuildCtx := ddl.NewMetaBuildContextWithSctx(mock.NewContext())
+	s, ok := stmt.(*ast.CreateTableStmt)
+	if ok {
+		return ddl.BuildTableInfoWithStmt(metaBuildCtx, s, mysql.DefaultCharset, "", nil)
 	}
 
-	specs := make([]ColumnSpec, 0)
-	for _, line := range lines[1 : len(lines)-1] {
-		line = strings.ReplaceAll(line, "`", "")
-		splitted := strings.Split(line, "/*")
+	return nil, errors.New("not a CREATE TABLE statement")
+}
 
-		comment := ""
-		if len(splitted) > 1 {
-			comment = strings.ReplaceAll(splitted[1], " ", "")
-			comment = strings.TrimSuffix(comment, "*/")
+func getSpecFromSQL(sqlPath string) ([]*ColumnSpec, error) {
+	data, err := os.ReadFile(sqlPath)
+	if err != nil {
+		return nil, err
+	}
+
+	query := string(data)
+	tbInfo, err := getTableInfoBySQL(query)
+	if err != nil {
+		return nil, err
+	}
+
+	specs := make([]*ColumnSpec, 0, len(tbInfo.Columns))
+	for _, col := range tbInfo.Columns {
+		spec := DefaultSpecs[col.GetType()].Clone()
+		spec.OrigName = col.Name.L
+
+		col.FieldType.AddFlag(mysql.PriKeyFlag | mysql.UniqueKeyFlag)
+		if !types.IsTypeNumeric(col.GetType()) && col.GetFlen() > 0 {
+			spec.TypeLen = col.GetFlen()
 		}
-
-		parts := strings.Split(strings.TrimSpace(splitted[0]), " ")
-
-		sqlTypeString := strings.ToLower(parts[1])
-		spec := getBasicSpec(sqlTypeString)
-		spec.parseComment(comment)
-		spec.OrigName = parts[0]
-
-		if strings.Contains(strings.ToLower(line), "unique") {
-			spec.IsUnique = true
+		if col.GetType() == mysql.TypeNewDecimal {
+			spec.Precision = col.FieldType.GetFlen()
+			spec.Scale = col.FieldType.GetDecimal()
 		}
-		if strings.Contains(strings.ToLower(line), "primary") {
-			spec.IsPrimary = true
+		if col.Comment != "" {
+			spec.parseComment(col.Comment)
 		}
 		specs = append(specs, spec)
 	}
 
-	return specs
+	if tbInfo.PKIsHandle {
+		for _, col := range tbInfo.Columns {
+			if mysql.HasPriKeyFlag(col.GetFlag()) {
+				specs[col.Offset].IsUnique = true
+				break
+			}
+		}
+	}
+
+	for _, index := range tbInfo.Indices {
+		if index.Primary || index.Unique {
+			for _, col := range index.Columns {
+				if col.Offset < len(specs) && col.Offset >= 0 {
+					specs[col.Offset].IsUnique = true
+				}
+			}
+		}
+	}
+
+	return specs, nil
 }
