@@ -59,7 +59,7 @@ func (c *ColumnSpec) generateInt(rowID int, rng *rand.Rand) int {
 		return c.generateGaussianInt(rng)
 	}
 
-	if c.IsUnique || c.IsPrimary {
+	if c.IsUnique {
 		return rowID
 	}
 
@@ -97,7 +97,7 @@ func (c *ColumnSpec) generateBatchNull(length int, rng *rand.Rand) []bool {
 }
 
 func (c *ColumnSpec) generateString(rng *rand.Rand) string {
-	if c.IsUnique || c.IsPrimary {
+	if c.IsUnique {
 		return uuid.New().String()
 	}
 
@@ -246,7 +246,7 @@ func (c *ColumnSpec) generateStringParquet(_ int, out []parquet.ByteArray, defLe
 	}
 }
 
-func generateSingleField(rowID int, spec ColumnSpec, rng *rand.Rand) string {
+func generateSingleField(rowID int, spec *ColumnSpec, rng *rand.Rand) string {
 	v, _ := spec.generate(rowID, rng)
 	return fmt.Sprintf("%v", v)
 }
