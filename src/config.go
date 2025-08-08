@@ -13,6 +13,7 @@ type S3Config struct {
 	Provider        string `toml:"provider,omitempty"`
 	Endpoint        string `toml:"endpoint,omitempty"`
 	Force           bool   `toml:"force,omitempty"`
+	RoleArn         string `toml:"role_arn,omitempty"`
 }
 
 type GCSConfig struct {
@@ -56,6 +57,7 @@ func GetStore(c Config) (storage.ExternalStorage, error) {
 			SecretAccessKey: c.S3Config.SecretAccessKey,
 			Provider:        c.S3Config.Provider,
 			Endpoint:        c.S3Config.Endpoint,
+			RoleARN:         c.S3Config.RoleArn,
 		}}
 	} else if c.GCSConfig != nil {
 		op = &storage.BackendOptions{GCS: storage.GCSBackendOptions{

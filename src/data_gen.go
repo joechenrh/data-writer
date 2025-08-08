@@ -101,7 +101,10 @@ func (c *ColumnSpec) generateString(rng *rand.Rand) string {
 		return uuid.New().String()
 	}
 
-	length := rng.Intn(c.TypeLen) + 1
+	lower := c.TypeLen * 3 / 4
+	upper := c.TypeLen
+	length := rng.Intn(upper-lower) + lower
+
 	b := make([]byte, length)
 	rng.Read(b)
 	for i := range b {
@@ -111,23 +114,16 @@ func (c *ColumnSpec) generateString(rng *rand.Rand) string {
 	return string(hack.String(b))
 }
 
-func (c *ColumnSpec) generateRandomTimestamp() string {
-	// Get the current time
+func (c *ColumnSpec) generateRandomTime(format string) string {
 	now := time.Now()
 
-	// Calculate the time one year ago
 	oneYearAgo := now.AddDate(-1, 0, 0)
 
-	// Generate a random duration between 0 and one year
 	randomDuration := time.Duration(rand.Int63n(int64(now.Sub(oneYearAgo))))
 
-	// Add the random duration to one year ago to get a random time within the last year
 	randomTime := oneYearAgo.Add(randomDuration)
 
-	// Format the random time into a string (e.g., RFC3339 format)
-	timestamp := randomTime.Format(time.RFC3339)
-
-	return timestamp
+	return randomTime.Format(format)
 }
 
 func (c *ColumnSpec) generate(rowID int, rng *rand.Rand) (any, int16) {
@@ -138,14 +134,16 @@ func (c *ColumnSpec) generate(rowID int, rng *rand.Rand) (any, int16) {
 	switch c.SQLType {
 	case "int":
 		return c.generateInt(rowID, rng), 1
-	case "bigint":
+	case "bigint", "double":
 		return c.generateInt(rowID, rng), 1
 	case "float64":
 		return c.generateInt(rowID, rng), 1
-	case "char", "varchar", "varbinary":
+	case "char", "varchar", "varbinary", "blob":
 		return c.generateString(rng), 1
-	case "timestamp":
-		return c.generateRandomTimestamp(), 1
+	case "timestamp", "datetime":
+		return c.generateRandomTime(time.DateTime), 1
+	case "date":
+		return c.generateRandomTime(time.DateOnly), 1
 	}
 	return nil, 0
 }
