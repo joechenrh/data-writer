@@ -13,8 +13,8 @@ import (
 )
 
 func (c *ColumnSpec) generatePartialOrderInt(rowID int) int {
-	randPrefix := (rowID * 1000000007) & 0x0000000000000007
-	moveBit := c.TypeLen - 5
+	randPrefix := (rowID * 1000000007) & 31
+	moveBit := c.TypeLen - 6
 	return (randPrefix << moveBit) + rowID
 }
 
@@ -54,13 +54,12 @@ func (c *ColumnSpec) generateRandomInt(rng *rand.Rand) int {
 }
 
 func (c *ColumnSpec) generateInt(rowID int, rng *rand.Rand) int {
-	// gaussian distribution
 	if c.StdDev > 0 {
 		return c.generateGaussianInt(rng)
 	}
 
-	if c.IsUnique {
-		return rowID
+	if c.IsUnique && c.Order == NumericNoOrder {
+		c.Order = NumericTotalOrder
 	}
 
 	switch c.Order {
@@ -69,7 +68,7 @@ func (c *ColumnSpec) generateInt(rowID int, rng *rand.Rand) int {
 	case NumericTotalOrder:
 		return rowID
 	case NumericPartialOrder:
-		if rowID%128 == 0 {
+		if rowID%32 == 0 {
 			return c.generatePartialOrderInt(rowID)
 		}
 		return rowID
