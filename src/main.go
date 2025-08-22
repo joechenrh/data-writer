@@ -19,9 +19,10 @@ var (
 )
 
 var (
-	writtenFiles atomic.Int32
-	suffix       string
-	genFunc      func(storage.ExternalFileWriter, int, []*ColumnSpec, Config) error
+	writtenFiles     atomic.Int32
+	suffix           string
+	genFunc          func(storage.ExternalFileWriter, int, []*ColumnSpec, Config) error
+	streamingGenFunc func(string, int, []*ColumnSpec, Config, chan<- *FileChunk) error
 )
 
 func main() {
@@ -34,9 +35,11 @@ func main() {
 	case "parquet":
 		suffix = "parquet"
 		genFunc = generateParquetFile
+		streamingGenFunc = generateParquetFileStreaming
 	case "csv":
 		suffix = "csv"
 		genFunc = generateCSVFile
+		streamingGenFunc = generateCSVFileStreaming
 	default:
 		log.Fatalf("Unsupported file format: %s", config.Common.FileFormat)
 	}

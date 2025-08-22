@@ -15,11 +15,40 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// Streaming data structures for chunk-based processing
+type FileChunk struct {
+	FileName string
+	Data     []byte
+	IsLast   bool // Indicates if this is the final chunk for the file
+}
+
+type FileInfo struct {
+	FileName string
+	FileNo   int
+}
+
+// Legacy data structure for buffered mode
 type FileData struct {
 	FileName string
 	Content  []byte
 }
 
+// Writer that streams data directly to storage
+type StreamingWriter struct {
+	store    storage.ExternalStorage
+	writer   storage.ExternalFileWriter
+	fileName string
+}
+
+func (w *StreamingWriter) Write(ctx context.Context, data []byte) (int, error) {
+	return w.writer.Write(ctx, data)
+}
+
+func (w *StreamingWriter) Close(ctx context.Context) error {
+	return w.writer.Close(ctx)
+}
+
+// Legacy in-memory writer for buffered mode
 type InMemoryWriter struct {
 	buffer *bytes.Buffer
 }
@@ -63,6 +92,15 @@ func generateFileData(fileNo int, specs []*ColumnSpec, cfg Config) (*FileData, e
 		FileName: fileName,
 		Content:  content,
 	}, nil
+}
+
+func generateFileStreaming(fileNo int, specs []*ColumnSpec, cfg Config, chunkChannel chan<- *FileChunk) error {
+	fileName := fmt.Sprintf("%s.%d.%s", cfg.Common.Prefix, fileNo, suffix)
+	if cfg.Common.Folders > 1 {
+		fileName = fmt.Sprintf("part%d/%s.%d.%s", fileNo%cfg.Common.Folders, cfg.Common.Prefix, fileNo, suffix)
+	}
+	
+	return streamingGenFunc(fileName, fileNo, specs, cfg, chunkChannel)
 }
 
 func DeleteAllFiles(cfg Config) error {
@@ -128,7 +166,9 @@ func showProcess(totalFiles int) {
 }
 
 func GenerateFiles(cfg Config) error {
-	if cfg.Common.UseBufferedWriter {
+	if cfg.Common.UseStreamingMode {
+		return generateFilesStreaming(cfg)
+	} else if cfg.Common.UseBufferedWriter {
 		return generateFilesBuffered(cfg)
 	}
 	return generateFilesDirect(cfg)
@@ -268,5 +308,100 @@ func generateFilesBuffered(cfg Config) error {
 	}
 	
 	close(dataChannel)
+	return errors.Trace(writeGroup.Wait())
+}
+
+// New streaming approach that processes data in chunks
+func generateFilesStreaming(cfg Config) error {
+	start := time.Now()
+	defer func() {
+		fmt.Printf("Generate and upload took %s (streaming mode)\n", time.Since(start))
+	}()
+
+	store, err := GetStore(cfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	defer store.Close()
+
+	specs, err := getSpecFromSQL(*sqlPath)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ctx := context.Background()
+
+	fmt.Print("Generating files (streaming mode)... ", specs)
+
+	startNo, endNo := cfg.Common.StartFileNo, cfg.Common.EndFileNo
+	totalFiles := endNo - startNo
+	showProcess(totalFiles)
+
+	chunkChannel := make(chan *FileChunk, *threads*2)
+	
+	genThreads := *threads - (*threads / 2)
+	writeThreads := *threads / 2
+	if writeThreads == 0 {
+		writeThreads = 1
+		genThreads = *threads - 1
+	}
+
+	var genGroup, writeGroup errgroup.Group
+	genGroup.SetLimit(genThreads)
+	writeGroup.SetLimit(writeThreads)
+
+	// File writers map to track active writers
+	writers := make(map[string]storage.ExternalFileWriter)
+	writersMutex := &sync.Mutex{}
+
+	for i := 0; i < writeThreads; i++ {
+		writeGroup.Go(func() error {
+			for chunk := range chunkChannel {
+				writersMutex.Lock()
+				writer, exists := writers[chunk.FileName]
+				
+				if !exists {
+					newWriter, err := store.Create(ctx, chunk.FileName, nil)
+					if err != nil {
+						writersMutex.Unlock()
+						return errors.Trace(err)
+					}
+					writers[chunk.FileName] = newWriter
+					writer = newWriter
+				}
+				writersMutex.Unlock()
+
+				if len(chunk.Data) > 0 {
+					_, err := writer.Write(ctx, chunk.Data)
+					if err != nil {
+						return errors.Trace(err)
+					}
+				}
+
+				if chunk.IsLast {
+					writersMutex.Lock()
+					writer.Close(ctx)
+					delete(writers, chunk.FileName)
+					writersMutex.Unlock()
+					writtenFiles.Add(1)
+				}
+			}
+			return nil
+		})
+	}
+
+	for i := startNo; i < endNo; i++ {
+		fileNo := i
+		genGroup.Go(func() error {
+			return generateFileStreaming(fileNo, specs, cfg, chunkChannel)
+		})
+	}
+
+	if err := genGroup.Wait(); err != nil {
+		close(chunkChannel)
+		return errors.Trace(err)
+	}
+	
+	close(chunkChannel)
 	return errors.Trace(writeGroup.Wait())
 }

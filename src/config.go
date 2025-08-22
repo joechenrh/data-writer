@@ -29,6 +29,7 @@ type CommonConfig struct {
 	Rows              int    `toml:"rows"`
 	FileFormat        string `toml:"format"`
 	UseBufferedWriter bool   `toml:"use_buffered_writer"`
+	UseStreamingMode  bool   `toml:"use_streaming_mode"`
 }
 
 type ParquetConfig struct {

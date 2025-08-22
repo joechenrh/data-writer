@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -231,5 +232,132 @@ func generateParquetFile(
 		return errors.Trace(err)
 	}
 	pw.Close()
+	return nil
+}
+
+func generateParquetFileStreaming(
+	fileName string,
+	fileNo int,
+	specs []*ColumnSpec,
+	cfg Config,
+	chunkChannel chan<- *FileChunk,
+) error {
+	numRows := cfg.Common.Rows
+	startRowID := numRows * fileNo
+	rowGroups := cfg.Parquet.NumRowGroups
+	if numRows%rowGroups != 0 {
+		return fmt.Errorf("numRows %d is not divisible by numRowGroups %d", numRows, rowGroups)
+	}
+
+	// Create a buffer to capture parquet data
+	buffer := &bytes.Buffer{}
+	wrapper := writeWrapper{Writer: &bufferWriter{buffer: buffer}}
+	pw := ParquetWriter{}
+
+	if err := pw.Init(&wrapper, numRows, rowGroups, int64(cfg.Parquet.PageSizeKB)<<10, specs); err != nil {
+		return errors.Trace(err)
+	}
+
+	// Stream the parquet data in chunks as it's written
+	chunkSize := 64 * 1024 // 64KB chunks
+	var lastSent int
+
+	// Custom writer that sends chunks as data is written
+	streamWriter := &streamingParquetWriter{
+		buffer:       buffer,
+		chunkChannel: chunkChannel,
+		fileName:     fileName,
+		chunkSize:    chunkSize,
+		lastSent:     &lastSent,
+	}
+	
+	wrapper.Writer = streamWriter
+
+	if err := pw.Write(startRowID); err != nil {
+		return errors.Trace(err)
+	}
+	pw.Close()
+
+	// Send any remaining data
+	remaining := buffer.Len() - lastSent
+	if remaining > 0 {
+		chunk := &FileChunk{
+			FileName: fileName,
+			Data:     buffer.Bytes()[lastSent:],
+			IsLast:   true,
+		}
+		select {
+		case chunkChannel <- chunk:
+		default:
+			return errors.New("chunk channel full")
+		}
+	} else {
+		// Send empty final chunk to signal completion
+		chunk := &FileChunk{
+			FileName: fileName,
+			Data:     []byte{},
+			IsLast:   true,
+		}
+		select {
+		case chunkChannel <- chunk:
+		default:
+			return errors.New("chunk channel full")
+		}
+	}
+
+	return nil
+}
+
+// Custom writer for streaming parquet data in chunks
+type streamingParquetWriter struct {
+	buffer       *bytes.Buffer
+	chunkChannel chan<- *FileChunk
+	fileName     string
+	chunkSize    int
+	lastSent     *int
+}
+
+func (w *streamingParquetWriter) Write(ctx context.Context, data []byte) (int, error) {
+	n, err := w.buffer.Write(data)
+	if err != nil {
+		return n, err
+	}
+
+	// Send chunks when buffer reaches chunk size
+	for w.buffer.Len()-*w.lastSent >= w.chunkSize {
+		chunkData := make([]byte, w.chunkSize)
+		copy(chunkData, w.buffer.Bytes()[*w.lastSent:*w.lastSent+w.chunkSize])
+		
+		chunk := &FileChunk{
+			FileName: w.fileName,
+			Data:     chunkData,
+			IsLast:   false,
+		}
+		
+		select {
+		case w.chunkChannel <- chunk:
+			*w.lastSent += w.chunkSize
+		default:
+			return n, errors.New("chunk channel full")
+		}
+	}
+
+	return n, nil
+}
+
+func (w *streamingParquetWriter) Close(ctx context.Context) error {
+	return nil
+}
+
+// Buffer writer for compatibility
+type bufferWriter struct {
+	buffer *bytes.Buffer
+}
+
+func (w *bufferWriter) Write(ctx context.Context, data []byte) (int, error) {
+	return w.buffer.Write(data)
+}
+
+func (w *bufferWriter) Close(ctx context.Context) error {
 	return nil
 }
