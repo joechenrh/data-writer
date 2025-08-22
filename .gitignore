@@ -1,2 +1,5 @@
 .vscode
 bin/
+data-writer
+*.exe
+/tmp/

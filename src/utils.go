@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log"
@@ -12,6 +13,41 @@ import (
 	"github.com/schollz/progressbar/v3"
 	"golang.org/x/sync/errgroup"
 )
+
+type FileData struct {
+	FileName string
+	Content  []byte
+}
+
+type InMemoryWriter struct {
+	buffer *bytes.Buffer
+}
+
+func (w *InMemoryWriter) Write(ctx context.Context, data []byte) (int, error) {
+	return w.buffer.Write(data)
+}
+
+func (w *InMemoryWriter) Close(ctx context.Context) error {
+	return nil
+}
+
+func generateFileData(fileNo int, specs []*ColumnSpec, cfg Config) (*FileData, error) {
+	writer := &InMemoryWriter{buffer: &bytes.Buffer{}}
+	
+	if err := genFunc(writer, fileNo, specs, cfg); err != nil {
+		return nil, err
+	}
+	
+	fileName := fmt.Sprintf("%s.%d.%s", cfg.Common.Prefix, fileNo, suffix)
+	if cfg.Common.Folders > 1 {
+		fileName = fmt.Sprintf("part%d/%s.%d.%s", fileNo%cfg.Common.Folders, cfg.Common.Prefix, fileNo, suffix)
+	}
+	
+	return &FileData{
+		FileName: fileName,
+		Content:  writer.buffer.Bytes(),
+	}, nil
+}
 
 func DeleteAllFiles(cfg Config) error {
 	var fileNames []string
@@ -86,7 +122,6 @@ func GenerateFiles(cfg Config) error {
 		return errors.Trace(err)
 	}
 
-	//nolint: errcheck
 	defer store.Close()
 
 	specs, err := getSpecFromSQL(*sqlPath)
@@ -97,34 +132,64 @@ func GenerateFiles(cfg Config) error {
 
 	fmt.Print("Generating files... ", specs)
 
-	eg, _ := errgroup.WithContext(ctx)
-	eg.SetLimit(*threads)
-
 	startNo, endNo := cfg.Common.StartFileNo, cfg.Common.EndFileNo
-	showProcess(endNo - startNo)
+	totalFiles := endNo - startNo
+	showProcess(totalFiles)
 
-	for i := startNo; i < endNo; i++ {
-		fileNo := i
-		eg.Go(func() error {
-			fileName := fmt.Sprintf("%s.%d.%s", cfg.Common.Prefix, fileNo, suffix)
-			if cfg.Common.Folders > 1 {
-				fileName = fmt.Sprintf("part%d/%s.%d.%s", fileNo%cfg.Common.Folders, cfg.Common.Prefix, fileNo, suffix)
-			}
+	dataChannel := make(chan *FileData, *threads)
+	
+	genThreads := *threads - (*threads / 2)
+	writeThreads := *threads / 2
+	if writeThreads == 0 {
+		writeThreads = 1
+		genThreads = *threads - 1
+	}
 
-			writer, err := store.Create(ctx, fileName, nil)
-			if err != nil {
-				return errors.Trace(err)
-			}
+	var genGroup, writeGroup errgroup.Group
+	genGroup.SetLimit(genThreads)
+	writeGroup.SetLimit(writeThreads)
 
-			//nolint: errcheck
-			defer writer.Close(ctx)
-			if err = genFunc(writer, fileNo, specs, cfg); err != nil {
-				return errors.Trace(err)
+	for i := 0; i < writeThreads; i++ {
+		writeGroup.Go(func() error {
+			for fileData := range dataChannel {
+				writer, err := store.Create(ctx, fileData.FileName, nil)
+				if err != nil {
+					return errors.Trace(err)
+				}
+
+				_, err = writer.Write(ctx, fileData.Content)
+				writer.Close(ctx)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				writtenFiles.Add(1)
 			}
-			writtenFiles.Add(1)
 			return nil
 		})
 	}
 
-	return errors.Trace(eg.Wait())
+	for i := startNo; i < endNo; i++ {
+		fileNo := i
+		genGroup.Go(func() error {
+			fileData, err := generateFileData(fileNo, specs, cfg)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			
+			select {
+			case dataChannel <- fileData:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		})
+	}
+
+	if err := genGroup.Wait(); err != nil {
+		close(dataChannel)
+		return errors.Trace(err)
+	}
+	
+	close(dataChannel)
+	return errors.Trace(writeGroup.Wait())
 }
