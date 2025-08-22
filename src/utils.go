@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -31,8 +32,19 @@ func (w *InMemoryWriter) Close(ctx context.Context) error {
 	return nil
 }
 
+// Buffer pool for reusing buffers to reduce memory allocation
+var bufferPool = &sync.Pool{
+	New: func() interface{} {
+		return &bytes.Buffer{}
+	},
+}
+
 func generateFileData(fileNo int, specs []*ColumnSpec, cfg Config) (*FileData, error) {
-	writer := &InMemoryWriter{buffer: &bytes.Buffer{}}
+	buffer := bufferPool.Get().(*bytes.Buffer)
+	buffer.Reset()
+	defer bufferPool.Put(buffer)
+	
+	writer := &InMemoryWriter{buffer: buffer}
 	
 	if err := genFunc(writer, fileNo, specs, cfg); err != nil {
 		return nil, err
@@ -43,9 +55,13 @@ func generateFileData(fileNo int, specs []*ColumnSpec, cfg Config) (*FileData, e
 		fileName = fmt.Sprintf("part%d/%s.%d.%s", fileNo%cfg.Common.Folders, cfg.Common.Prefix, fileNo, suffix)
 	}
 	
+	// Copy buffer content to avoid issues with buffer reuse
+	content := make([]byte, buffer.Len())
+	copy(content, buffer.Bytes())
+	
 	return &FileData{
 		FileName: fileName,
-		Content:  writer.buffer.Bytes(),
+		Content:  content,
 	}, nil
 }
 
@@ -112,9 +128,17 @@ func showProcess(totalFiles int) {
 }
 
 func GenerateFiles(cfg Config) error {
+	if cfg.Common.UseBufferedWriter {
+		return generateFilesBuffered(cfg)
+	}
+	return generateFilesDirect(cfg)
+}
+
+// Original direct writing approach
+func generateFilesDirect(cfg Config) error {
 	start := time.Now()
 	defer func() {
-		fmt.Printf("Generate and upload took %s\n", time.Since(start))
+		fmt.Printf("Generate and upload took %s (direct mode)\n", time.Since(start))
 	}()
 
 	store, err := GetStore(cfg)
@@ -130,7 +154,60 @@ func GenerateFiles(cfg Config) error {
 	}
 	ctx := context.Background()
 
-	fmt.Print("Generating files... ", specs)
+	fmt.Print("Generating files (direct mode)... ", specs)
+
+	eg, _ := errgroup.WithContext(ctx)
+	eg.SetLimit(*threads)
+
+	startNo, endNo := cfg.Common.StartFileNo, cfg.Common.EndFileNo
+	showProcess(endNo - startNo)
+
+	for i := startNo; i < endNo; i++ {
+		fileNo := i
+		eg.Go(func() error {
+			fileName := fmt.Sprintf("%s.%d.%s", cfg.Common.Prefix, fileNo, suffix)
+			if cfg.Common.Folders > 1 {
+				fileName = fmt.Sprintf("part%d/%s.%d.%s", fileNo%cfg.Common.Folders, cfg.Common.Prefix, fileNo, suffix)
+			}
+
+			writer, err := store.Create(ctx, fileName, nil)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			defer writer.Close(ctx)
+			if err = genFunc(writer, fileNo, specs, cfg); err != nil {
+				return errors.Trace(err)
+			}
+			writtenFiles.Add(1)
+			return nil
+		})
+	}
+
+	return errors.Trace(eg.Wait())
+}
+
+// New buffered approach with goroutine separation
+func generateFilesBuffered(cfg Config) error {
+	start := time.Now()
+	defer func() {
+		fmt.Printf("Generate and upload took %s (buffered mode)\n", time.Since(start))
+	}()
+
+	store, err := GetStore(cfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	defer store.Close()
+
+	specs, err := getSpecFromSQL(*sqlPath)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ctx := context.Background()
+
+	fmt.Print("Generating files (buffered mode)... ", specs)
 
 	startNo, endNo := cfg.Common.StartFileNo, cfg.Common.EndFileNo
 	totalFiles := endNo - startNo

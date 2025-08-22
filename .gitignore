@@ -3,3 +3,6 @@ bin/
 data-writer
 *.exe
 /tmp/
+*_test.go
+*.test
+BENCHMARK_RESULTS.md

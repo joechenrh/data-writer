@@ -21,13 +21,14 @@ type GCSConfig struct {
 }
 
 type CommonConfig struct {
-	Path        string `toml:"path"`
-	Prefix      string `toml:"prefix"`
-	Folders     int    `toml:"folders"`
-	StartFileNo int    `toml:"start_fileno"`
-	EndFileNo   int    `toml:"end_fileno"`
-	Rows        int    `toml:"rows"`
-	FileFormat  string `toml:"format"`
+	Path              string `toml:"path"`
+	Prefix            string `toml:"prefix"`
+	Folders           int    `toml:"folders"`
+	StartFileNo       int    `toml:"start_fileno"`
+	EndFileNo         int    `toml:"end_fileno"`
+	Rows              int    `toml:"rows"`
+	FileFormat        string `toml:"format"`
+	UseBufferedWriter bool   `toml:"use_buffered_writer"`
 }
 
 type ParquetConfig struct {
