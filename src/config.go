@@ -30,6 +30,7 @@ type CommonConfig struct {
 	FileFormat        string `toml:"format"`
 	UseBufferedWriter bool   `toml:"use_buffered_writer"`
 	UseStreamingMode  bool   `toml:"use_streaming_mode"`
+	ChunkSizeKB       int    `toml:"chunk_size_kb"`
 }
 
 type ParquetConfig struct {

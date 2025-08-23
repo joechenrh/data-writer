@@ -23,6 +23,7 @@ var (
 	suffix           string
 	genFunc          func(storage.ExternalFileWriter, int, []*ColumnSpec, Config) error
 	streamingGenFunc func(string, int, []*ColumnSpec, Config, chan<- *FileChunk) error
+	generator        DataGenerator
 )
 
 func main() {
@@ -31,15 +32,24 @@ func main() {
 	var config Config
 	toml.DecodeFile(*cfgPath, &config)
 
+	// Initialize chunk calculator and generators
+	targetChunkSize := 64 * 1024 // Default 64KB
+	if config.Common.ChunkSizeKB > 0 {
+		targetChunkSize = config.Common.ChunkSizeKB * 1024
+	}
+	chunkCalculator := NewChunkSizeCalculator(targetChunkSize)
+
 	switch strings.ToLower(config.Common.FileFormat) {
 	case "parquet":
 		suffix = "parquet"
+		generator = NewParquetGenerator(chunkCalculator)
 		genFunc = generateParquetFile
-		streamingGenFunc = generateParquetFileStreaming
+		streamingGenFunc = generator.GenerateFileStreaming
 	case "csv":
 		suffix = "csv"
+		generator = NewCSVGenerator(chunkCalculator)
 		genFunc = generateCSVFile
-		streamingGenFunc = generateCSVFileStreaming
+		streamingGenFunc = generator.GenerateFileStreaming
 	default:
 		log.Fatalf("Unsupported file format: %s", config.Common.FileFormat)
 	}

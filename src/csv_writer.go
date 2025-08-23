@@ -32,6 +32,35 @@ func generateCSVRow(specs []*ColumnSpec, rowID int, withBase64 bool, rng *rand.R
 	return sb.String()
 }
 
+// CSVGenerator implements DataGenerator interface for CSV files
+type CSVGenerator struct {
+	chunkCalculator ChunkCalculator
+}
+
+// NewCSVGenerator creates a new CSV generator
+func NewCSVGenerator(chunkCalculator ChunkCalculator) *CSVGenerator {
+	return &CSVGenerator{chunkCalculator: chunkCalculator}
+}
+
+func (g *CSVGenerator) GenerateFile(
+	writer storage.ExternalFileWriter,
+	fileNo int,
+	specs []*ColumnSpec,
+	cfg Config,
+) error {
+	return generateCSVFile(writer, fileNo, specs, cfg)
+}
+
+func (g *CSVGenerator) GenerateFileStreaming(
+	fileName string,
+	fileNo int,
+	specs []*ColumnSpec,
+	cfg Config,
+	chunkChannel chan<- *FileChunk,
+) error {
+	return g.generateCSVFileStreaming(fileName, fileNo, specs, cfg, chunkChannel)
+}
+
 func generateCSVFile(
 	writer storage.ExternalFileWriter,
 	fileNo int,
@@ -53,9 +82,7 @@ func generateCSVFile(
 	return nil
 }
 
-const CSVChunkSize = 1000 // Process CSV in chunks of 1000 rows
-
-func generateCSVFileStreaming(
+func (g *CSVGenerator) generateCSVFileStreaming(
 	fileName string,
 	fileNo int,
 	specs []*ColumnSpec,
@@ -68,14 +95,17 @@ func generateCSVFileStreaming(
 	startRowID := fileNo * cfg.Common.Rows
 	totalRows := cfg.Common.Rows
 	
-	for rowOffset := 0; rowOffset < totalRows; rowOffset += CSVChunkSize {
+	// Calculate dynamic chunk size based on row size
+	chunkRows := g.chunkCalculator.CalculateChunkSize(specs, cfg)
+	
+	for rowOffset := 0; rowOffset < totalRows; rowOffset += chunkRows {
 		var sb strings.Builder
-		chunkRows := CSVChunkSize
+		actualChunkRows := chunkRows
 		if rowOffset+chunkRows > totalRows {
-			chunkRows = totalRows - rowOffset
+			actualChunkRows = totalRows - rowOffset
 		}
 		
-		for i := 0; i < chunkRows; i++ {
+		for i := 0; i < actualChunkRows; i++ {
 			rowID := startRowID + rowOffset + i
 			row := generateCSVRow(specs, rowID, cfg.CSV.Base64, rng)
 			sb.WriteString(row)
@@ -84,7 +114,7 @@ func generateCSVFileStreaming(
 		chunk := &FileChunk{
 			FileName: fileName,
 			Data:     String2Bytes(sb.String()),
-			IsLast:   rowOffset+chunkRows >= totalRows,
+			IsLast:   rowOffset+actualChunkRows >= totalRows,
 		}
 		
 		select {

@@ -15,37 +15,10 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// Streaming data structures for chunk-based processing
-type FileChunk struct {
-	FileName string
-	Data     []byte
-	IsLast   bool // Indicates if this is the final chunk for the file
-}
-
-type FileInfo struct {
-	FileName string
-	FileNo   int
-}
-
 // Legacy data structure for buffered mode
 type FileData struct {
 	FileName string
 	Content  []byte
-}
-
-// Writer that streams data directly to storage
-type StreamingWriter struct {
-	store    storage.ExternalStorage
-	writer   storage.ExternalFileWriter
-	fileName string
-}
-
-func (w *StreamingWriter) Write(ctx context.Context, data []byte) (int, error) {
-	return w.writer.Write(ctx, data)
-}
-
-func (w *StreamingWriter) Close(ctx context.Context) error {
-	return w.writer.Close(ctx)
 }
 
 // Legacy in-memory writer for buffered mode
@@ -92,15 +65,6 @@ func generateFileData(fileNo int, specs []*ColumnSpec, cfg Config) (*FileData, e
 		FileName: fileName,
 		Content:  content,
 	}, nil
-}
-
-func generateFileStreaming(fileNo int, specs []*ColumnSpec, cfg Config, chunkChannel chan<- *FileChunk) error {
-	fileName := fmt.Sprintf("%s.%d.%s", cfg.Common.Prefix, fileNo, suffix)
-	if cfg.Common.Folders > 1 {
-		fileName = fmt.Sprintf("part%d/%s.%d.%s", fileNo%cfg.Common.Folders, cfg.Common.Prefix, fileNo, suffix)
-	}
-	
-	return streamingGenFunc(fileName, fileNo, specs, cfg, chunkChannel)
 }
 
 func DeleteAllFiles(cfg Config) error {
@@ -337,6 +301,18 @@ func generateFilesStreaming(cfg Config) error {
 	totalFiles := endNo - startNo
 	showProcess(totalFiles)
 
+	// Initialize chunk calculator with configurable size
+	targetChunkSize := 64 * 1024 // Default 64KB
+	if cfg.Common.ChunkSizeKB > 0 {
+		targetChunkSize = cfg.Common.ChunkSizeKB * 1024
+	}
+	chunkCalculator := NewChunkSizeCalculator(targetChunkSize)
+
+	// Log the calculated chunk parameters for visibility
+	estimatedRowSize := chunkCalculator.EstimateRowSize(specs, cfg)
+	chunkRows := chunkCalculator.CalculateChunkSize(specs, cfg)
+	fmt.Printf("Estimated row size: %d bytes, chunk size: %d rows\n", estimatedRowSize, chunkRows)
+
 	chunkChannel := make(chan *FileChunk, *threads*2)
 	
 	genThreads := *threads - (*threads / 2)
@@ -350,39 +326,16 @@ func generateFilesStreaming(cfg Config) error {
 	genGroup.SetLimit(genThreads)
 	writeGroup.SetLimit(writeThreads)
 
-	// File writers map to track active writers
-	writers := make(map[string]storage.ExternalFileWriter)
-	writersMutex := &sync.Mutex{}
+	// Create streaming coordinator for chunk processing
+	coordinator := NewStreamingCoordinator(store, chunkCalculator)
 
 	for i := 0; i < writeThreads; i++ {
 		writeGroup.Go(func() error {
 			for chunk := range chunkChannel {
-				writersMutex.Lock()
-				writer, exists := writers[chunk.FileName]
-				
-				if !exists {
-					newWriter, err := store.Create(ctx, chunk.FileName, nil)
-					if err != nil {
-						writersMutex.Unlock()
-						return errors.Trace(err)
-					}
-					writers[chunk.FileName] = newWriter
-					writer = newWriter
+				if err := coordinator.ProcessChunk(ctx, chunk); err != nil {
+					return err
 				}
-				writersMutex.Unlock()
-
-				if len(chunk.Data) > 0 {
-					_, err := writer.Write(ctx, chunk.Data)
-					if err != nil {
-						return errors.Trace(err)
-					}
-				}
-
 				if chunk.IsLast {
-					writersMutex.Lock()
-					writer.Close(ctx)
-					delete(writers, chunk.FileName)
-					writersMutex.Unlock()
 					writtenFiles.Add(1)
 				}
 			}

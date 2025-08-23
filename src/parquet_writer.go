@@ -209,6 +209,35 @@ func (pw *ParquetWriter) Write(startRowID int) error {
 	return nil
 }
 
+// ParquetGenerator implements DataGenerator interface for Parquet files
+type ParquetGenerator struct {
+	chunkCalculator ChunkCalculator
+}
+
+// NewParquetGenerator creates a new Parquet generator
+func NewParquetGenerator(chunkCalculator ChunkCalculator) *ParquetGenerator {
+	return &ParquetGenerator{chunkCalculator: chunkCalculator}
+}
+
+func (g *ParquetGenerator) GenerateFile(
+	writer storage.ExternalFileWriter,
+	fileNo int,
+	specs []*ColumnSpec,
+	cfg Config,
+) error {
+	return generateParquetFile(writer, fileNo, specs, cfg)
+}
+
+func (g *ParquetGenerator) GenerateFileStreaming(
+	fileName string,
+	fileNo int,
+	specs []*ColumnSpec,
+	cfg Config,
+	chunkChannel chan<- *FileChunk,
+) error {
+	return g.generateParquetFileStreaming(fileName, fileNo, specs, cfg, chunkChannel)
+}
+
 func generateParquetFile(
 	writer storage.ExternalFileWriter,
 	fileNo int,
@@ -235,7 +264,7 @@ func generateParquetFile(
 	return nil
 }
 
-func generateParquetFileStreaming(
+func (g *ParquetGenerator) generateParquetFileStreaming(
 	fileName string,
 	fileNo int,
 	specs []*ColumnSpec,
@@ -251,15 +280,20 @@ func generateParquetFileStreaming(
 
 	// Create a buffer to capture parquet data
 	buffer := &bytes.Buffer{}
-	wrapper := writeWrapper{Writer: &bufferWriter{buffer: buffer}}
+	wrapper := writeWrapper{Writer: &BufferWriter{buffer: buffer}}
 	pw := ParquetWriter{}
 
 	if err := pw.Init(&wrapper, numRows, rowGroups, int64(cfg.Parquet.PageSizeKB)<<10, specs); err != nil {
 		return errors.Trace(err)
 	}
 
+	// Calculate dynamic chunk size for Parquet streaming
+	targetChunkSize := 64 * 1024 // Default 64KB
+	if cfg.Common.ChunkSizeKB > 0 {
+		targetChunkSize = cfg.Common.ChunkSizeKB * 1024
+	}
+
 	// Stream the parquet data in chunks as it's written
-	chunkSize := 64 * 1024 // 64KB chunks
 	var lastSent int
 
 	// Custom writer that sends chunks as data is written
@@ -267,7 +301,7 @@ func generateParquetFileStreaming(
 		buffer:       buffer,
 		chunkChannel: chunkChannel,
 		fileName:     fileName,
-		chunkSize:    chunkSize,
+		chunkSize:    targetChunkSize,
 		lastSent:     &lastSent,
 	}
 	
