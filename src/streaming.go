@@ -8,6 +8,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"golang.org/x/sync/errgroup"
 )
 
 // Streaming data structures for chunk-based processing
@@ -136,16 +137,32 @@ type StreamingCoordinator struct {
 	chunkCalculator  ChunkCalculator
 	writers          map[string]storage.ExternalFileWriter
 	writersMutex     *sync.Mutex
+	genGroup         errgroup.Group
+	writeGroup       errgroup.Group
+	chunkChannel     chan *FileChunk
 }
 
 // NewStreamingCoordinator creates a new streaming coordinator
-func NewStreamingCoordinator(store storage.ExternalStorage, chunkCalculator ChunkCalculator) *StreamingCoordinator {
-	return &StreamingCoordinator{
+func NewStreamingCoordinator(store storage.ExternalStorage, chunkCalculator ChunkCalculator, threads int) *StreamingCoordinator {
+	genThreads := threads - (threads / 2)
+	writeThreads := threads / 2
+	if writeThreads == 0 {
+		writeThreads = 1
+		genThreads = threads - 1
+	}
+	
+	coordinator := &StreamingCoordinator{
 		store:           store,
 		chunkCalculator: chunkCalculator,
 		writers:         make(map[string]storage.ExternalFileWriter),
 		writersMutex:    &sync.Mutex{},
+		chunkChannel:    make(chan *FileChunk, threads*2),
 	}
+	
+	coordinator.genGroup.SetLimit(genThreads)
+	coordinator.writeGroup.SetLimit(writeThreads)
+	
+	return coordinator
 }
 
 // ProcessChunk handles individual file chunks
@@ -179,6 +196,50 @@ func (sc *StreamingCoordinator) ProcessChunk(ctx context.Context, chunk *FileChu
 	}
 	
 	return nil
+}
+
+// CoordinateStreaming manages the complete streaming process with concurrency
+func (sc *StreamingCoordinator) CoordinateStreaming(ctx context.Context, startNo, endNo int, specs []*ColumnSpec, cfg Config, writtenFiles interface { Add(delta int32) int32; Load() int32 }) error {
+	writeThreads := (endNo - startNo) / 2
+	if writeThreads == 0 {
+		writeThreads = 1
+	}
+	if writeThreads > 10 { // Cap at reasonable number
+		writeThreads = 10
+	}
+	
+	// Start writer goroutines
+	for i := 0; i < writeThreads; i++ {
+		sc.writeGroup.Go(func() error {
+			for chunk := range sc.chunkChannel {
+				if err := sc.ProcessChunk(ctx, chunk); err != nil {
+					return err
+				}
+				if chunk.IsLast {
+					writtenFiles.Add(1)
+				}
+			}
+			return nil
+		})
+	}
+	
+	// Start generator goroutines
+	for i := startNo; i < endNo; i++ {
+		fileNo := i
+		sc.genGroup.Go(func() error {
+			return generateFileStreaming(fileNo, specs, cfg, sc.chunkChannel)
+		})
+	}
+	
+	// Wait for all generators to complete
+	if err := sc.genGroup.Wait(); err != nil {
+		close(sc.chunkChannel)
+		return errors.Trace(err)
+	}
+	
+	// Close the channel and wait for writers to finish
+	close(sc.chunkChannel)
+	return errors.Trace(sc.writeGroup.Wait())
 }
 
 // generateFileStreaming is a generic function for streaming file generation

@@ -313,48 +313,8 @@ func generateFilesStreaming(cfg Config) error {
 	chunkRows := chunkCalculator.CalculateChunkSize(specs, cfg)
 	fmt.Printf("Estimated row size: %d bytes, chunk size: %d rows\n", estimatedRowSize, chunkRows)
 
-	chunkChannel := make(chan *FileChunk, *threads*2)
+	// Create streaming coordinator and let it handle all concurrency
+	coordinator := NewStreamingCoordinator(store, chunkCalculator, *threads)
 	
-	genThreads := *threads - (*threads / 2)
-	writeThreads := *threads / 2
-	if writeThreads == 0 {
-		writeThreads = 1
-		genThreads = *threads - 1
-	}
-
-	var genGroup, writeGroup errgroup.Group
-	genGroup.SetLimit(genThreads)
-	writeGroup.SetLimit(writeThreads)
-
-	// Create streaming coordinator for chunk processing
-	coordinator := NewStreamingCoordinator(store, chunkCalculator)
-
-	for i := 0; i < writeThreads; i++ {
-		writeGroup.Go(func() error {
-			for chunk := range chunkChannel {
-				if err := coordinator.ProcessChunk(ctx, chunk); err != nil {
-					return err
-				}
-				if chunk.IsLast {
-					writtenFiles.Add(1)
-				}
-			}
-			return nil
-		})
-	}
-
-	for i := startNo; i < endNo; i++ {
-		fileNo := i
-		genGroup.Go(func() error {
-			return generateFileStreaming(fileNo, specs, cfg, chunkChannel)
-		})
-	}
-
-	if err := genGroup.Wait(); err != nil {
-		close(chunkChannel)
-		return errors.Trace(err)
-	}
-	
-	close(chunkChannel)
-	return errors.Trace(writeGroup.Wait())
+	return coordinator.CoordinateStreaming(ctx, startNo, endNo, specs, cfg, &writtenFiles)
 }

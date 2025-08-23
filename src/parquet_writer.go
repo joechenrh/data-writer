@@ -280,13 +280,7 @@ func (g *ParquetGenerator) generateParquetFileStreaming(
 
 	// Create a buffer to capture parquet data
 	buffer := &bytes.Buffer{}
-	wrapper := writeWrapper{Writer: &BufferWriter{buffer: buffer}}
-	pw := ParquetWriter{}
-
-	if err := pw.Init(&wrapper, numRows, rowGroups, int64(cfg.Parquet.PageSizeKB)<<10, specs); err != nil {
-		return errors.Trace(err)
-	}
-
+	
 	// Calculate dynamic chunk size for Parquet streaming
 	targetChunkSize := 64 * 1024 // Default 64KB
 	if cfg.Common.ChunkSizeKB > 0 {
@@ -305,7 +299,12 @@ func (g *ParquetGenerator) generateParquetFileStreaming(
 		lastSent:     &lastSent,
 	}
 	
-	wrapper.Writer = streamWriter
+	wrapper := writeWrapper{Writer: streamWriter}
+	pw := ParquetWriter{}
+
+	if err := pw.Init(&wrapper, numRows, rowGroups, int64(cfg.Parquet.PageSizeKB)<<10, specs); err != nil {
+		return errors.Trace(err)
+	}
 
 	if err := pw.Write(startRowID); err != nil {
 		return errors.Trace(err)
