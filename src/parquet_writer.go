@@ -238,13 +238,13 @@ func (g *ParquetGenerator) GenerateFileStreaming(
 	return g.generateParquetFileStreaming(fileName, fileNo, specs, cfg, chunkChannel)
 }
 
-func generateParquetFile(
-	writer storage.ExternalFileWriter,
+// Common parquet generation function that works with any writer
+func generateParquetCommon(
+	wrapper *writeWrapper,
 	fileNo int,
 	specs []*ColumnSpec,
 	cfg Config,
 ) error {
-	wrapper := writeWrapper{Writer: writer}
 	pw := ParquetWriter{}
 
 	numRows := cfg.Common.Rows
@@ -254,7 +254,7 @@ func generateParquetFile(
 		return fmt.Errorf("numRows %d is not divisible by numRowGroups %d", numRows, rowGroups)
 	}
 
-	if err := pw.Init(&wrapper, numRows, rowGroups, int64(cfg.Parquet.PageSizeKB)<<10, specs); err != nil {
+	if err := pw.Init(wrapper, numRows, rowGroups, int64(cfg.Parquet.PageSizeKB)<<10, specs); err != nil {
 		return errors.Trace(err)
 	}
 	if err := pw.Write(startRowID); err != nil {
@@ -264,6 +264,16 @@ func generateParquetFile(
 	return nil
 }
 
+func generateParquetFile(
+	writer storage.ExternalFileWriter,
+	fileNo int,
+	specs []*ColumnSpec,
+	cfg Config,
+) error {
+	wrapper := &writeWrapper{Writer: writer}
+	return generateParquetCommon(wrapper, fileNo, specs, cfg)
+}
+
 func (g *ParquetGenerator) generateParquetFileStreaming(
 	fileName string,
 	fileNo int,
@@ -271,13 +281,6 @@ func (g *ParquetGenerator) generateParquetFileStreaming(
 	cfg Config,
 	chunkChannel chan<- *FileChunk,
 ) error {
-	numRows := cfg.Common.Rows
-	startRowID := numRows * fileNo
-	rowGroups := cfg.Parquet.NumRowGroups
-	if numRows%rowGroups != 0 {
-		return fmt.Errorf("numRows %d is not divisible by numRowGroups %d", numRows, rowGroups)
-	}
-
 	// Create a buffer to capture parquet data
 	buffer := &bytes.Buffer{}
 	
@@ -298,44 +301,8 @@ func (g *ParquetGenerator) generateParquetFileStreaming(
 		lastSent:     &lastSent,
 	}
 	
-	wrapper := writeWrapper{Writer: streamWriter}
-	pw := ParquetWriter{}
-
-	if err := pw.Init(&wrapper, numRows, rowGroups, int64(cfg.Parquet.PageSizeKB)<<10, specs); err != nil {
-		return errors.Trace(err)
-	}
-
-	if err := pw.Write(startRowID); err != nil {
-		return errors.Trace(err)
-	}
-	pw.Close()
-
-	// Send any remaining data
-	remaining := buffer.Len() - lastSent
-	if remaining > 0 {
-		chunk := &FileChunk{
-			Data:   buffer.Bytes()[lastSent:],
-			IsLast: true,
-		}
-		select {
-		case chunkChannel <- chunk:
-		default:
-			return errors.New("chunk channel full")
-		}
-	} else {
-		// Send empty final chunk to signal completion
-		chunk := &FileChunk{
-			Data:   []byte{},
-			IsLast: true,
-		}
-		select {
-		case chunkChannel <- chunk:
-		default:
-			return errors.New("chunk channel full")
-		}
-	}
-
-	return nil
+	wrapper := &writeWrapper{Writer: streamWriter}
+	return generateParquetCommon(wrapper, fileNo, specs, cfg)
 }
 
 // Custom writer for streaming parquet data in chunks
@@ -374,18 +341,31 @@ func (w *streamingParquetWriter) Write(ctx context.Context, data []byte) (int, e
 }
 
 func (w *streamingParquetWriter) Close(ctx context.Context) error {
+	// Send any remaining data
+	remaining := w.buffer.Len() - *w.lastSent
+	if remaining > 0 {
+		chunk := &FileChunk{
+			Data:   w.buffer.Bytes()[*w.lastSent:],
+			IsLast: true,
+		}
+		select {
+		case w.chunkChannel <- chunk:
+		default:
+			return errors.New("chunk channel full")
+		}
+	} else {
+		// Send empty final chunk to signal completion
+		chunk := &FileChunk{
+			Data:   []byte{},
+			IsLast: true,
+		}
+		select {
+		case w.chunkChannel <- chunk:
+		default:
+			return errors.New("chunk channel full")
+		}
+	}
 	return nil
 }
 
-// Buffer writer for compatibility
-type bufferWriter struct {
-	buffer *bytes.Buffer
-}
 
-func (w *bufferWriter) Write(ctx context.Context, data []byte) (int, error) {
-	return w.buffer.Write(data)
-}
-
-func (w *bufferWriter) Close(ctx context.Context) error {
-	return nil
-}

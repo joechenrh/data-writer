@@ -8,7 +8,6 @@ import (
 	"flag"
 
 	"github.com/BurntSushi/toml"
-	"github.com/pingcap/tidb/br/pkg/storage"
 )
 
 var (
@@ -21,7 +20,6 @@ var (
 var (
 	writtenFiles     atomic.Int32
 	suffix           string
-	genFunc          func(storage.ExternalFileWriter, int, []*ColumnSpec, Config) error
 	streamingGenFunc func(string, int, []*ColumnSpec, Config, chan<- *FileChunk) error
 	generator        DataGenerator
 )
@@ -43,12 +41,10 @@ func main() {
 	case "parquet":
 		suffix = "parquet"
 		generator = NewParquetGenerator(chunkCalculator)
-		genFunc = generateParquetFile
 		streamingGenFunc = generator.GenerateFileStreaming
 	case "csv":
 		suffix = "csv"
 		generator = NewCSVGenerator(chunkCalculator)
-		genFunc = generateCSVFile
 		streamingGenFunc = generator.GenerateFileStreaming
 	default:
 		log.Fatalf("Unsupported file format: %s", config.Common.FileFormat)

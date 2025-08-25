@@ -124,7 +124,7 @@ func generateFilesDirect(cfg Config) error {
 			}
 
 			defer writer.Close(ctx)
-			if err = genFunc(writer, fileNo, specs, cfg); err != nil {
+			if err = generator.GenerateFile(writer, fileNo, specs, cfg); err != nil {
 				return errors.Trace(err)
 			}
 			writtenFiles.Add(1)
