@@ -229,13 +229,14 @@ func (g *ParquetGenerator) GenerateFile(
 }
 
 func (g *ParquetGenerator) GenerateFileStreaming(
+	ctx context.Context,
 	fileName string,
 	fileNo int,
 	specs []*ColumnSpec,
 	cfg Config,
 	chunkChannel chan<- *FileChunk,
 ) error {
-	return g.generateParquetFileStreaming(fileName, fileNo, specs, cfg, chunkChannel)
+	return g.generateParquetFileStreaming(ctx, fileName, fileNo, specs, cfg, chunkChannel)
 }
 
 // Common parquet generation function that works with any writer
@@ -275,6 +276,7 @@ func generateParquetFile(
 }
 
 func (g *ParquetGenerator) generateParquetFileStreaming(
+	ctx context.Context,
 	fileName string,
 	fileNo int,
 	specs []*ColumnSpec,
@@ -299,6 +301,7 @@ func (g *ParquetGenerator) generateParquetFileStreaming(
 		chunkChannel: chunkChannel,
 		chunkSize:    targetChunkSize,
 		lastSent:     &lastSent,
+		ctx:          ctx,
 	}
 	
 	wrapper := &writeWrapper{Writer: streamWriter}
@@ -311,6 +314,7 @@ type streamingParquetWriter struct {
 	chunkChannel chan<- *FileChunk
 	chunkSize    int
 	lastSent     *int
+	ctx          context.Context
 }
 
 func (w *streamingParquetWriter) Write(ctx context.Context, data []byte) (int, error) {
@@ -329,11 +333,12 @@ func (w *streamingParquetWriter) Write(ctx context.Context, data []byte) (int, e
 			IsLast: false,
 		}
 		
+		// Use context-aware channel send instead of returning error on full channel
 		select {
 		case w.chunkChannel <- chunk:
 			*w.lastSent += w.chunkSize
-		default:
-			return n, errors.New("chunk channel full")
+		case <-w.ctx.Done():
+			return n, w.ctx.Err()
 		}
 	}
 
@@ -350,8 +355,8 @@ func (w *streamingParquetWriter) Close(ctx context.Context) error {
 		}
 		select {
 		case w.chunkChannel <- chunk:
-		default:
-			return errors.New("chunk channel full")
+		case <-w.ctx.Done():
+			return w.ctx.Err()
 		}
 	} else {
 		// Send empty final chunk to signal completion
@@ -361,8 +366,8 @@ func (w *streamingParquetWriter) Close(ctx context.Context) error {
 		}
 		select {
 		case w.chunkChannel <- chunk:
-		default:
-			return errors.New("chunk channel full")
+		case <-w.ctx.Done():
+			return w.ctx.Err()
 		}
 	}
 	return nil

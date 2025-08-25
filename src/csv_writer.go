@@ -8,7 +8,6 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 )
 
@@ -52,13 +51,14 @@ func (g *CSVGenerator) GenerateFile(
 }
 
 func (g *CSVGenerator) GenerateFileStreaming(
+	ctx context.Context,
 	fileName string,
 	fileNo int,
 	specs []*ColumnSpec,
 	cfg Config,
 	chunkChannel chan<- *FileChunk,
 ) error {
-	return g.generateCSVFileStreaming(fileName, fileNo, specs, cfg, chunkChannel)
+	return g.generateCSVFileStreaming(ctx, fileName, fileNo, specs, cfg, chunkChannel)
 }
 
 func generateCSVFile(
@@ -83,6 +83,7 @@ func generateCSVFile(
 }
 
 func (g *CSVGenerator) generateCSVFileStreaming(
+	ctx context.Context,
 	fileName string,
 	fileNo int,
 	specs []*ColumnSpec,
@@ -99,6 +100,13 @@ func (g *CSVGenerator) generateCSVFileStreaming(
 	chunkRows := g.chunkCalculator.CalculateChunkSize(specs, cfg)
 	
 	for rowOffset := 0; rowOffset < totalRows; rowOffset += chunkRows {
+		// Check for context cancellation before processing each chunk
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		
 		var sb strings.Builder
 		actualChunkRows := chunkRows
 		if rowOffset+chunkRows > totalRows {
@@ -116,10 +124,11 @@ func (g *CSVGenerator) generateCSVFileStreaming(
 			IsLast: rowOffset+actualChunkRows >= totalRows,
 		}
 		
+		// Use context-aware channel send instead of returning error on full channel
 		select {
 		case chunkChannel <- chunk:
-		default:
-			return errors.New("chunk channel full")
+		case <-ctx.Done():
+			return ctx.Err()
 		}
 	}
 

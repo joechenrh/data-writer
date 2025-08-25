@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"strings"
 	"sync/atomic"
@@ -20,7 +21,7 @@ var (
 var (
 	writtenFiles     atomic.Int32
 	suffix           string
-	streamingGenFunc func(string, int, []*ColumnSpec, Config, chan<- *FileChunk) error
+	streamingGenFunc func(context.Context, string, int, []*ColumnSpec, Config, chan<- *FileChunk) error
 	generator        DataGenerator
 )
 

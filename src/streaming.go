@@ -135,6 +135,10 @@ func (sc *StreamingCoordinator) fileWriter(ctx context.Context, fileName string,
 
 // CoordinateStreaming manages the complete streaming process with paired goroutines
 func (sc *StreamingCoordinator) CoordinateStreaming(ctx context.Context, startNo, endNo int, specs []*ColumnSpec, cfg Config, writtenFiles interface { Add(delta int32) int32; Load() int32 }, threads int) error {
+	// Create a cancellable context for all operations
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	
 	var eg errgroup.Group
 	eg.SetLimit(threads)
 	
@@ -153,12 +157,22 @@ func (sc *StreamingCoordinator) CoordinateStreaming(ctx context.Context, startNo
 			// Start writer goroutine for this file
 			var writerGroup errgroup.Group
 			writerGroup.Go(func() error {
-				return sc.fileWriter(ctx, fileName, chunkChannel)
+				err := sc.fileWriter(ctx, fileName, chunkChannel)
+				if err != nil {
+					// Cancel context on writer error to stop generation
+					cancel()
+				}
+				return err
 			})
 			
 			// Generate file in current goroutine, sending chunks to its writer
-			err := streamingGenFunc(fileName, fileNo, specs, cfg, chunkChannel)
+			err := streamingGenFunc(ctx, fileName, fileNo, specs, cfg, chunkChannel)
 			close(chunkChannel) // Signal writer that generation is complete
+			
+			if err != nil {
+				// Cancel context on generation error
+				cancel()
+			}
 			
 			// Wait for writer to finish
 			if writerErr := writerGroup.Wait(); writerErr != nil {
