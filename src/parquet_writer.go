@@ -294,7 +294,6 @@ func (g *ParquetGenerator) generateParquetFileStreaming(
 	streamWriter := &streamingParquetWriter{
 		buffer:       buffer,
 		chunkChannel: chunkChannel,
-		fileName:     fileName,
 		chunkSize:    targetChunkSize,
 		lastSent:     &lastSent,
 	}
@@ -315,9 +314,8 @@ func (g *ParquetGenerator) generateParquetFileStreaming(
 	remaining := buffer.Len() - lastSent
 	if remaining > 0 {
 		chunk := &FileChunk{
-			FileName: fileName,
-			Data:     buffer.Bytes()[lastSent:],
-			IsLast:   true,
+			Data:   buffer.Bytes()[lastSent:],
+			IsLast: true,
 		}
 		select {
 		case chunkChannel <- chunk:
@@ -327,9 +325,8 @@ func (g *ParquetGenerator) generateParquetFileStreaming(
 	} else {
 		// Send empty final chunk to signal completion
 		chunk := &FileChunk{
-			FileName: fileName,
-			Data:     []byte{},
-			IsLast:   true,
+			Data:   []byte{},
+			IsLast: true,
 		}
 		select {
 		case chunkChannel <- chunk:
@@ -345,7 +342,6 @@ func (g *ParquetGenerator) generateParquetFileStreaming(
 type streamingParquetWriter struct {
 	buffer       *bytes.Buffer
 	chunkChannel chan<- *FileChunk
-	fileName     string
 	chunkSize    int
 	lastSent     *int
 }
@@ -362,9 +358,8 @@ func (w *streamingParquetWriter) Write(ctx context.Context, data []byte) (int, e
 		copy(chunkData, w.buffer.Bytes()[*w.lastSent:*w.lastSent+w.chunkSize])
 		
 		chunk := &FileChunk{
-			FileName: w.fileName,
-			Data:     chunkData,
-			IsLast:   false,
+			Data:   chunkData,
+			IsLast: false,
 		}
 		
 		select {

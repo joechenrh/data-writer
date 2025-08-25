@@ -112,9 +112,8 @@ func (g *CSVGenerator) generateCSVFileStreaming(
 		}
 		
 		chunk := &FileChunk{
-			FileName: fileName,
-			Data:     String2Bytes(sb.String()),
-			IsLast:   rowOffset+actualChunkRows >= totalRows,
+			Data:   String2Bytes(sb.String()),
+			IsLast: rowOffset+actualChunkRows >= totalRows,
 		}
 		
 		select {

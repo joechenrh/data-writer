@@ -1,12 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"log"
 	"runtime"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -14,58 +12,6 @@ import (
 	"github.com/schollz/progressbar/v3"
 	"golang.org/x/sync/errgroup"
 )
-
-// Legacy data structure for buffered mode
-type FileData struct {
-	FileName string
-	Content  []byte
-}
-
-// Legacy in-memory writer for buffered mode
-type InMemoryWriter struct {
-	buffer *bytes.Buffer
-}
-
-func (w *InMemoryWriter) Write(ctx context.Context, data []byte) (int, error) {
-	return w.buffer.Write(data)
-}
-
-func (w *InMemoryWriter) Close(ctx context.Context) error {
-	return nil
-}
-
-// Buffer pool for reusing buffers to reduce memory allocation
-var bufferPool = &sync.Pool{
-	New: func() interface{} {
-		return &bytes.Buffer{}
-	},
-}
-
-func generateFileData(fileNo int, specs []*ColumnSpec, cfg Config) (*FileData, error) {
-	buffer := bufferPool.Get().(*bytes.Buffer)
-	buffer.Reset()
-	defer bufferPool.Put(buffer)
-	
-	writer := &InMemoryWriter{buffer: buffer}
-	
-	if err := genFunc(writer, fileNo, specs, cfg); err != nil {
-		return nil, err
-	}
-	
-	fileName := fmt.Sprintf("%s.%d.%s", cfg.Common.Prefix, fileNo, suffix)
-	if cfg.Common.Folders > 1 {
-		fileName = fmt.Sprintf("part%d/%s.%d.%s", fileNo%cfg.Common.Folders, cfg.Common.Prefix, fileNo, suffix)
-	}
-	
-	// Copy buffer content to avoid issues with buffer reuse
-	content := make([]byte, buffer.Len())
-	copy(content, buffer.Bytes())
-	
-	return &FileData{
-		FileName: fileName,
-		Content:  content,
-	}, nil
-}
 
 func DeleteAllFiles(cfg Config) error {
 	var fileNames []string
@@ -132,8 +78,6 @@ func showProcess(totalFiles int) {
 func GenerateFiles(cfg Config) error {
 	if cfg.Common.UseStreamingMode {
 		return generateFilesStreaming(cfg)
-	} else if cfg.Common.UseBufferedWriter {
-		return generateFilesBuffered(cfg)
 	}
 	return generateFilesDirect(cfg)
 }
@@ -192,89 +136,6 @@ func generateFilesDirect(cfg Config) error {
 }
 
 // New buffered approach with goroutine separation
-func generateFilesBuffered(cfg Config) error {
-	start := time.Now()
-	defer func() {
-		fmt.Printf("Generate and upload took %s (buffered mode)\n", time.Since(start))
-	}()
-
-	store, err := GetStore(cfg)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	defer store.Close()
-
-	specs, err := getSpecFromSQL(*sqlPath)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	ctx := context.Background()
-
-	fmt.Print("Generating files (buffered mode)... ", specs)
-
-	startNo, endNo := cfg.Common.StartFileNo, cfg.Common.EndFileNo
-	totalFiles := endNo - startNo
-	showProcess(totalFiles)
-
-	dataChannel := make(chan *FileData, *threads)
-	
-	genThreads := *threads - (*threads / 2)
-	writeThreads := *threads / 2
-	if writeThreads == 0 {
-		writeThreads = 1
-		genThreads = *threads - 1
-	}
-
-	var genGroup, writeGroup errgroup.Group
-	genGroup.SetLimit(genThreads)
-	writeGroup.SetLimit(writeThreads)
-
-	for i := 0; i < writeThreads; i++ {
-		writeGroup.Go(func() error {
-			for fileData := range dataChannel {
-				writer, err := store.Create(ctx, fileData.FileName, nil)
-				if err != nil {
-					return errors.Trace(err)
-				}
-
-				_, err = writer.Write(ctx, fileData.Content)
-				writer.Close(ctx)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				writtenFiles.Add(1)
-			}
-			return nil
-		})
-	}
-
-	for i := startNo; i < endNo; i++ {
-		fileNo := i
-		genGroup.Go(func() error {
-			fileData, err := generateFileData(fileNo, specs, cfg)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			
-			select {
-			case dataChannel <- fileData:
-				return nil
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		})
-	}
-
-	if err := genGroup.Wait(); err != nil {
-		close(dataChannel)
-		return errors.Trace(err)
-	}
-	
-	close(dataChannel)
-	return errors.Trace(writeGroup.Wait())
-}
-
 // New streaming approach that processes data in chunks
 func generateFilesStreaming(cfg Config) error {
 	start := time.Now()
@@ -314,7 +175,7 @@ func generateFilesStreaming(cfg Config) error {
 	fmt.Printf("Estimated row size: %d bytes, chunk size: %d rows\n", estimatedRowSize, chunkRows)
 
 	// Create streaming coordinator and let it handle all concurrency
-	coordinator := NewStreamingCoordinator(store, chunkCalculator, *threads)
+	coordinator := NewStreamingCoordinator(store, chunkCalculator)
 	
-	return coordinator.CoordinateStreaming(ctx, startNo, endNo, specs, cfg, &writtenFiles)
+	return coordinator.CoordinateStreaming(ctx, startNo, endNo, specs, cfg, &writtenFiles, *threads)
 }

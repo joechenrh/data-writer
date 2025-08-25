@@ -1,57 +1,21 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"golang.org/x/sync/errgroup"
 )
 
-// Streaming data structures for chunk-based processing
+// Streaming data structure for chunk-based processing
 type FileChunk struct {
-	FileName string
-	Data     []byte
-	IsLast   bool // Indicates if this is the final chunk for the file
+	Data   []byte
+	IsLast bool // Indicates if this is the final chunk for the file
 }
 
-type FileInfo struct {
-	FileName string
-	FileNo   int
-}
-
-// Writer that streams data directly to storage
-type StreamingWriter struct {
-	store    storage.ExternalStorage
-	writer   storage.ExternalFileWriter
-	fileName string
-}
-
-func (w *StreamingWriter) Write(ctx context.Context, data []byte) (int, error) {
-	return w.writer.Write(ctx, data)
-}
-
-func (w *StreamingWriter) Close(ctx context.Context) error {
-	return w.writer.Close(ctx)
-}
-
-// Buffer writer for compatibility
-type BufferWriter struct {
-	buffer *bytes.Buffer
-}
-
-func (w *BufferWriter) Write(ctx context.Context, data []byte) (int, error) {
-	return w.buffer.Write(data)
-}
-
-func (w *BufferWriter) Close(ctx context.Context) error {
-	return nil
-}
-
-// ChunkSizeCalculator implements ChunkCalculator interface
+// ChunkSizeCalculator for determining optimal chunk sizes
 type ChunkSizeCalculator struct {
 	targetChunkSizeBytes int
 }
@@ -131,82 +95,27 @@ func (c *ChunkSizeCalculator) CalculateChunkSize(specs []*ColumnSpec, cfg Config
 	return chunkRows
 }
 
-// StreamingCoordinator manages streaming operations across multiple files
+// StreamingCoordinator manages lock-free streaming operations with paired goroutines
 type StreamingCoordinator struct {
-	store            storage.ExternalStorage
-	chunkCalculator  ChunkCalculator
-	genGroup         errgroup.Group
-	writeGroup       errgroup.Group
-	fileChannels     map[string]chan *FileChunk
-	channelsMutex    *sync.RWMutex
+	store           storage.ExternalStorage
+	chunkCalculator ChunkCalculator
 }
 
 // NewStreamingCoordinator creates a new streaming coordinator
-func NewStreamingCoordinator(store storage.ExternalStorage, chunkCalculator ChunkCalculator, threads int) *StreamingCoordinator {
-	genThreads := threads - (threads / 2)
-	writeThreads := threads / 2
-	if writeThreads == 0 {
-		writeThreads = 1
-		genThreads = threads - 1
-	}
-	
-	coordinator := &StreamingCoordinator{
+func NewStreamingCoordinator(store storage.ExternalStorage, chunkCalculator ChunkCalculator) *StreamingCoordinator {
+	return &StreamingCoordinator{
 		store:           store,
 		chunkCalculator: chunkCalculator,
-		fileChannels:    make(map[string]chan *FileChunk),
-		channelsMutex:   &sync.RWMutex{},
 	}
-	
-	coordinator.genGroup.SetLimit(genThreads)
-	coordinator.writeGroup.SetLimit(writeThreads)
-	
-	return coordinator
 }
 
-// getOrCreateFileChannel returns the channel for a specific file, creating it if needed
-func (sc *StreamingCoordinator) getOrCreateFileChannel(fileName string) chan *FileChunk {
-	sc.channelsMutex.RLock()
-	channel, exists := sc.fileChannels[fileName]
-	sc.channelsMutex.RUnlock()
-	
-	if exists {
-		return channel
-	}
-	
-	sc.channelsMutex.Lock()
-	// Double-check pattern to avoid race condition
-	if channel, exists := sc.fileChannels[fileName]; exists {
-		sc.channelsMutex.Unlock()
-		return channel
-	}
-	
-	channel = make(chan *FileChunk, 10) // Buffer for each file
-	sc.fileChannels[fileName] = channel
-	
-	// Start dedicated writer goroutine for this file
-	sc.writeGroup.Go(func() error {
-		return sc.handleFileWriter(fileName, channel)
-	})
-	
-	sc.channelsMutex.Unlock()
-	return channel
-}
-
-// handleFileWriter manages writing for a single file
-func (sc *StreamingCoordinator) handleFileWriter(fileName string, chunkChannel <-chan *FileChunk) error {
-	ctx := context.Background()
+// fileWriter handles writing for a single file from its dedicated channel
+func (sc *StreamingCoordinator) fileWriter(ctx context.Context, fileName string, chunkChannel <-chan *FileChunk) error {
 	writer, err := sc.store.Create(ctx, fileName, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	
-	defer func() {
-		writer.Close(ctx)
-		// Clean up the channel from the map
-		sc.channelsMutex.Lock()
-		delete(sc.fileChannels, fileName)
-		sc.channelsMutex.Unlock()
-	}()
+	defer writer.Close(ctx)
 	
 	for chunk := range chunkChannel {
 		if len(chunk.Data) > 0 {
@@ -224,69 +133,46 @@ func (sc *StreamingCoordinator) handleFileWriter(fileName string, chunkChannel <
 	return nil
 }
 
-// ProcessChunk handles individual file chunks using per-file channels
-func (sc *StreamingCoordinator) ProcessChunk(ctx context.Context, chunk *FileChunk) error {
-	channel := sc.getOrCreateFileChannel(chunk.FileName)
+// CoordinateStreaming manages the complete streaming process with paired goroutines
+func (sc *StreamingCoordinator) CoordinateStreaming(ctx context.Context, startNo, endNo int, specs []*ColumnSpec, cfg Config, writtenFiles interface { Add(delta int32) int32; Load() int32 }, threads int) error {
+	var eg errgroup.Group
+	eg.SetLimit(threads)
 	
-	select {
-	case channel <- chunk:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-// CoordinateStreaming manages the complete streaming process with concurrency
-func (sc *StreamingCoordinator) CoordinateStreaming(ctx context.Context, startNo, endNo int, specs []*ColumnSpec, cfg Config, writtenFiles interface { Add(delta int32) int32; Load() int32 }) error {
-	chunkChannel := make(chan *FileChunk, (endNo-startNo)*2)
-	
-	// Start chunk processor that routes chunks to appropriate file channels
-	sc.writeGroup.Go(func() error {
-		defer func() {
-			// Close all file channels when done
-			sc.channelsMutex.Lock()
-			for _, ch := range sc.fileChannels {
-				close(ch)
-			}
-			sc.channelsMutex.Unlock()
-		}()
-		
-		for chunk := range chunkChannel {
-			if err := sc.ProcessChunk(ctx, chunk); err != nil {
-				return err
-			}
-			if chunk.IsLast {
-				writtenFiles.Add(1)
-			}
-		}
-		return nil
-	})
-	
-	// Start generator goroutines
+	// Create one generator-writer pair for each file
 	for i := startNo; i < endNo; i++ {
 		fileNo := i
-		sc.genGroup.Go(func() error {
-			return generateFileStreaming(fileNo, specs, cfg, chunkChannel)
+		eg.Go(func() error {
+			fileName := fmt.Sprintf("%s.%d.%s", cfg.Common.Prefix, fileNo, suffix)
+			if cfg.Common.Folders > 1 {
+				fileName = fmt.Sprintf("part%d/%s.%d.%s", fileNo%cfg.Common.Folders, cfg.Common.Prefix, fileNo, suffix)
+			}
+			
+			// Create dedicated channel for this file pair
+			chunkChannel := make(chan *FileChunk, 10)
+			
+			// Start writer goroutine for this file
+			var writerGroup errgroup.Group
+			writerGroup.Go(func() error {
+				return sc.fileWriter(ctx, fileName, chunkChannel)
+			})
+			
+			// Generate file in current goroutine, sending chunks to its writer
+			err := streamingGenFunc(fileName, fileNo, specs, cfg, chunkChannel)
+			close(chunkChannel) // Signal writer that generation is complete
+			
+			// Wait for writer to finish
+			if writerErr := writerGroup.Wait(); writerErr != nil {
+				return writerErr
+			}
+			
+			if err != nil {
+				return err
+			}
+			
+			writtenFiles.Add(1)
+			return nil
 		})
 	}
 	
-	// Wait for all generators to complete
-	if err := sc.genGroup.Wait(); err != nil {
-		close(chunkChannel)
-		return errors.Trace(err)
-	}
-	
-	// Close the channel and wait for writers to finish
-	close(chunkChannel)
-	return errors.Trace(sc.writeGroup.Wait())
-}
-
-// generateFileStreaming is a generic function for streaming file generation
-func generateFileStreaming(fileNo int, specs []*ColumnSpec, cfg Config, chunkChannel chan<- *FileChunk) error {
-	fileName := fmt.Sprintf("%s.%d.%s", cfg.Common.Prefix, fileNo, suffix)
-	if cfg.Common.Folders > 1 {
-		fileName = fmt.Sprintf("part%d/%s.%d.%s", fileNo%cfg.Common.Folders, cfg.Common.Prefix, fileNo, suffix)
-	}
-	
-	return streamingGenFunc(fileName, fileNo, specs, cfg, chunkChannel)
+	return errors.Trace(eg.Wait())
 }
