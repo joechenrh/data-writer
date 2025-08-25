@@ -21,15 +21,15 @@ type GCSConfig struct {
 }
 
 type CommonConfig struct {
-	Path            string `toml:"path"`
-	Prefix          string `toml:"prefix"`
-	Folders         int    `toml:"folders"`
-	StartFileNo     int    `toml:"start_fileno"`
-	EndFileNo       int    `toml:"end_fileno"`
-	Rows            int    `toml:"rows"`
-	FileFormat      string `toml:"format"`
-	UseStreamingMode bool  `toml:"use_streaming_mode"`
-	ChunkSizeKB     int    `toml:"chunk_size_kb"`
+	Path             string `toml:"path"`
+	Prefix           string `toml:"prefix"`
+	Folders          int    `toml:"folders"`
+	StartFileNo      int    `toml:"start_fileno"`
+	EndFileNo        int    `toml:"end_fileno"`
+	Rows             int    `toml:"rows"`
+	FileFormat       string `toml:"format"`
+	UseStreamingMode bool   `toml:"use_streaming_mode"`
+	ChunkSizeKB      int    `toml:"chunk_size_kb"`
 }
 
 type ParquetConfig struct {

@@ -21,7 +21,7 @@ var (
 var (
 	writtenFiles     atomic.Int32
 	suffix           string
-	streamingGenFunc func(context.Context, string, int, []*ColumnSpec, Config, chan<- *FileChunk) error
+	streamingGenFunc func(context.Context, int, []*ColumnSpec, Config, chan<- *FileChunk) error
 	generator        DataGenerator
 )
 

@@ -52,13 +52,12 @@ func (g *CSVGenerator) GenerateFile(
 
 func (g *CSVGenerator) GenerateFileStreaming(
 	ctx context.Context,
-	fileName string,
 	fileNo int,
 	specs []*ColumnSpec,
 	cfg Config,
 	chunkChannel chan<- *FileChunk,
 ) error {
-	return g.generateCSVFileStreaming(ctx, fileName, fileNo, specs, cfg, chunkChannel)
+	return g.generateCSVFileStreaming(ctx, fileNo, specs, cfg, chunkChannel)
 }
 
 func generateCSVFile(
@@ -84,7 +83,6 @@ func generateCSVFile(
 
 func (g *CSVGenerator) generateCSVFileStreaming(
 	ctx context.Context,
-	fileName string,
 	fileNo int,
 	specs []*ColumnSpec,
 	cfg Config,
@@ -95,10 +93,10 @@ func (g *CSVGenerator) generateCSVFileStreaming(
 
 	startRowID := fileNo * cfg.Common.Rows
 	totalRows := cfg.Common.Rows
-	
+
 	// Calculate dynamic chunk size based on row size
 	chunkRows := g.chunkCalculator.CalculateChunkSize(specs, cfg)
-	
+
 	for rowOffset := 0; rowOffset < totalRows; rowOffset += chunkRows {
 		// Check for context cancellation before processing each chunk
 		select {
@@ -106,24 +104,24 @@ func (g *CSVGenerator) generateCSVFileStreaming(
 			return ctx.Err()
 		default:
 		}
-		
+
 		var sb strings.Builder
 		actualChunkRows := chunkRows
 		if rowOffset+chunkRows > totalRows {
 			actualChunkRows = totalRows - rowOffset
 		}
-		
+
 		for i := 0; i < actualChunkRows; i++ {
 			rowID := startRowID + rowOffset + i
 			row := generateCSVRow(specs, rowID, cfg.CSV.Base64, rng)
 			sb.WriteString(row)
 		}
-		
+
 		chunk := &FileChunk{
 			Data:   String2Bytes(sb.String()),
 			IsLast: rowOffset+actualChunkRows >= totalRows,
 		}
-		
+
 		// Use context-aware channel send instead of returning error on full channel
 		select {
 		case chunkChannel <- chunk:

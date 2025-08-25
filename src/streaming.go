@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -31,7 +32,7 @@ func NewChunkSizeCalculator(targetSizeBytes int) *ChunkSizeCalculator {
 // EstimateRowSize calculates the approximate size of a single row in bytes
 func (c *ChunkSizeCalculator) EstimateRowSize(specs []*ColumnSpec, cfg Config) int {
 	totalSize := 0
-	
+
 	for _, spec := range specs {
 		switch spec.SQLType {
 		case "bigint", "timestamp", "datetime":
@@ -57,15 +58,14 @@ func (c *ChunkSizeCalculator) EstimateRowSize(specs []*ColumnSpec, cfg Config) i
 			totalSize += 16 // Default estimate for unknown types
 		}
 	}
-	
+
 	// Add overhead for delimiters (CSV) or encoding (Parquet)
 	if cfg.Common.FileFormat == "csv" {
-		totalSize += len(specs) - 1 // Commas between fields
-		totalSize += 1 // Newline
+		totalSize += len(specs)
 	} else {
 		totalSize = int(float64(totalSize) * 1.2) // 20% overhead for Parquet encoding
 	}
-	
+
 	return totalSize
 }
 
@@ -75,23 +75,20 @@ func (c *ChunkSizeCalculator) CalculateChunkSize(specs []*ColumnSpec, cfg Config
 	if rowSize <= 0 {
 		rowSize = 100 // Fallback
 	}
-	
-	chunkRows := c.targetChunkSizeBytes / rowSize
-	if chunkRows < 1 {
-		chunkRows = 1
-	}
-	
+
+	chunkRows := max(c.targetChunkSizeBytes/rowSize, 1)
+
 	// Ensure reasonable bounds
 	minChunkRows := 100
 	maxChunkRows := 10000
-	
+
 	if chunkRows < minChunkRows {
 		chunkRows = minChunkRows
 	}
 	if chunkRows > maxChunkRows {
 		chunkRows = maxChunkRows
 	}
-	
+
 	return chunkRows
 }
 
@@ -116,7 +113,7 @@ func (sc *StreamingCoordinator) fileWriter(ctx context.Context, fileName string,
 		return errors.Trace(err)
 	}
 	defer writer.Close(ctx)
-	
+
 	for chunk := range chunkChannel {
 		if len(chunk.Data) > 0 {
 			_, err := writer.Write(ctx, chunk.Data)
@@ -124,24 +121,28 @@ func (sc *StreamingCoordinator) fileWriter(ctx context.Context, fileName string,
 				return errors.Trace(err)
 			}
 		}
-		
+
 		if chunk.IsLast {
 			break
 		}
 	}
-	
+
 	return nil
 }
 
 // CoordinateStreaming manages the complete streaming process with paired goroutines
-func (sc *StreamingCoordinator) CoordinateStreaming(ctx context.Context, startNo, endNo int, specs []*ColumnSpec, cfg Config, writtenFiles interface { Add(delta int32) int32; Load() int32 }, threads int) error {
+func (sc *StreamingCoordinator) CoordinateStreaming(
+	ctx context.Context, startNo, endNo int,
+	specs []*ColumnSpec, cfg Config,
+	writtenFiles *atomic.Int32, threads int,
+) error {
 	// Create a cancellable context for all operations
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	
+
 	var eg errgroup.Group
 	eg.SetLimit(threads)
-	
+
 	// Create one generator-writer pair for each file
 	for i := startNo; i < endNo; i++ {
 		fileNo := i
@@ -150,10 +151,9 @@ func (sc *StreamingCoordinator) CoordinateStreaming(ctx context.Context, startNo
 			if cfg.Common.Folders > 1 {
 				fileName = fmt.Sprintf("part%d/%s.%d.%s", fileNo%cfg.Common.Folders, cfg.Common.Prefix, fileNo, suffix)
 			}
-			
-			// Create dedicated channel for this file pair
-			chunkChannel := make(chan *FileChunk, 10)
-			
+
+			chunkChannel := make(chan *FileChunk, 4)
+
 			// Start writer goroutine for this file
 			var writerGroup errgroup.Group
 			writerGroup.Go(func() error {
@@ -164,29 +164,28 @@ func (sc *StreamingCoordinator) CoordinateStreaming(ctx context.Context, startNo
 				}
 				return err
 			})
-			
+
 			// Generate file in current goroutine, sending chunks to its writer
-			err := streamingGenFunc(ctx, fileName, fileNo, specs, cfg, chunkChannel)
-			close(chunkChannel) // Signal writer that generation is complete
-			
+			err := streamingGenFunc(ctx, fileNo, specs, cfg, chunkChannel)
+			close(chunkChannel)
+
 			if err != nil {
-				// Cancel context on generation error
 				cancel()
 			}
-			
+
 			// Wait for writer to finish
 			if writerErr := writerGroup.Wait(); writerErr != nil {
 				return writerErr
 			}
-			
+
 			if err != nil {
 				return err
 			}
-			
+
 			writtenFiles.Add(1)
 			return nil
 		})
 	}
-	
+
 	return errors.Trace(eg.Wait())
 }

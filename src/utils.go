@@ -176,6 +176,6 @@ func generateFilesStreaming(cfg Config) error {
 
 	// Create streaming coordinator and let it handle all concurrency
 	coordinator := NewStreamingCoordinator(store, chunkCalculator)
-	
+
 	return coordinator.CoordinateStreaming(ctx, startNo, endNo, specs, cfg, &writtenFiles, *threads)
 }

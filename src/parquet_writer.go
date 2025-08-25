@@ -230,13 +230,12 @@ func (g *ParquetGenerator) GenerateFile(
 
 func (g *ParquetGenerator) GenerateFileStreaming(
 	ctx context.Context,
-	fileName string,
 	fileNo int,
 	specs []*ColumnSpec,
 	cfg Config,
 	chunkChannel chan<- *FileChunk,
 ) error {
-	return g.generateParquetFileStreaming(ctx, fileName, fileNo, specs, cfg, chunkChannel)
+	return g.generateParquetFileStreaming(ctx, fileNo, specs, cfg, chunkChannel)
 }
 
 // Common parquet generation function that works with any writer
@@ -277,7 +276,6 @@ func generateParquetFile(
 
 func (g *ParquetGenerator) generateParquetFileStreaming(
 	ctx context.Context,
-	fileName string,
 	fileNo int,
 	specs []*ColumnSpec,
 	cfg Config,
@@ -285,26 +283,18 @@ func (g *ParquetGenerator) generateParquetFileStreaming(
 ) error {
 	// Create a buffer to capture parquet data
 	buffer := &bytes.Buffer{}
-	
-	// Calculate dynamic chunk size for Parquet streaming
-	targetChunkSize := 64 * 1024 // Default 64KB
+
+	targetChunkSize := 8 << 20 // Default 8MB
 	if cfg.Common.ChunkSizeKB > 0 {
 		targetChunkSize = cfg.Common.ChunkSizeKB * 1024
 	}
 
-	// Stream the parquet data in chunks as it's written
-	var lastSent int
-
-	// Custom writer that sends chunks as data is written
-	streamWriter := &streamingParquetWriter{
+	wrapper := &writeWrapper{Writer: &streamingParquetWriter{
 		buffer:       buffer,
 		chunkChannel: chunkChannel,
 		chunkSize:    targetChunkSize,
-		lastSent:     &lastSent,
 		ctx:          ctx,
-	}
-	
-	wrapper := &writeWrapper{Writer: streamWriter}
+	}}
 	return generateParquetCommon(wrapper, fileNo, specs, cfg)
 }
 
@@ -313,7 +303,7 @@ type streamingParquetWriter struct {
 	buffer       *bytes.Buffer
 	chunkChannel chan<- *FileChunk
 	chunkSize    int
-	lastSent     *int
+	lastSent     int
 	ctx          context.Context
 }
 
@@ -324,22 +314,29 @@ func (w *streamingParquetWriter) Write(ctx context.Context, data []byte) (int, e
 	}
 
 	// Send chunks when buffer reaches chunk size
-	for w.buffer.Len()-*w.lastSent >= w.chunkSize {
+	for w.buffer.Len()-w.lastSent >= w.chunkSize {
 		chunkData := make([]byte, w.chunkSize)
-		copy(chunkData, w.buffer.Bytes()[*w.lastSent:*w.lastSent+w.chunkSize])
-		
+		copy(chunkData, w.buffer.Bytes()[w.lastSent:w.lastSent+w.chunkSize])
+
 		chunk := &FileChunk{
 			Data:   chunkData,
 			IsLast: false,
 		}
-		
-		// Use context-aware channel send instead of returning error on full channel
+
 		select {
 		case w.chunkChannel <- chunk:
-			*w.lastSent += w.chunkSize
+			w.lastSent += w.chunkSize
 		case <-w.ctx.Done():
 			return n, w.ctx.Err()
 		}
+	}
+
+	// Reset buffer when we've sent enough chunks to prevent memory buildup
+	if w.lastSent >= w.chunkSize*4 {
+		remaining := w.buffer.Bytes()[w.lastSent:]
+		w.buffer.Reset()
+		w.buffer.Write(remaining)
+		w.lastSent = 0
 	}
 
 	return n, nil
@@ -347,10 +344,10 @@ func (w *streamingParquetWriter) Write(ctx context.Context, data []byte) (int, e
 
 func (w *streamingParquetWriter) Close(ctx context.Context) error {
 	// Send any remaining data
-	remaining := w.buffer.Len() - *w.lastSent
+	remaining := w.buffer.Len() - w.lastSent
 	if remaining > 0 {
 		chunk := &FileChunk{
-			Data:   w.buffer.Bytes()[*w.lastSent:],
+			Data:   w.buffer.Bytes()[w.lastSent:],
 			IsLast: true,
 		}
 		select {
@@ -372,5 +369,3 @@ func (w *streamingParquetWriter) Close(ctx context.Context) error {
 	}
 	return nil
 }
-
-
