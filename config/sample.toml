@@ -16,6 +16,16 @@ rows = 4000
 
 format = "CSV"
 
+# Enable high-performance buffered mode
+use_buffered_writer = true
+
+# Enable streaming mode for scalable memory usage with large files
+use_streaming_mode = true
+
+# Target chunk size for streaming mode in KB (default: 64KB)
+# Actual chunk size is calculated based on row size to optimize memory usage
+chunk_size_kb = 64
+
 [parquet]
 row_groups = 1
 page_size_kb = 1024

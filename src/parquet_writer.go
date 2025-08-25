@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -208,13 +209,42 @@ func (pw *ParquetWriter) Write(startRowID int) error {
 	return nil
 }
 
-func generateParquetFile(
+// ParquetGenerator implements DataGenerator interface for Parquet files
+type ParquetGenerator struct {
+	chunkCalculator ChunkCalculator
+}
+
+// NewParquetGenerator creates a new Parquet generator
+func NewParquetGenerator(chunkCalculator ChunkCalculator) *ParquetGenerator {
+	return &ParquetGenerator{chunkCalculator: chunkCalculator}
+}
+
+func (g *ParquetGenerator) GenerateFile(
 	writer storage.ExternalFileWriter,
 	fileNo int,
 	specs []*ColumnSpec,
 	cfg Config,
 ) error {
-	wrapper := writeWrapper{Writer: writer}
+	return generateParquetFile(writer, fileNo, specs, cfg)
+}
+
+func (g *ParquetGenerator) GenerateFileStreaming(
+	ctx context.Context,
+	fileNo int,
+	specs []*ColumnSpec,
+	cfg Config,
+	chunkChannel chan<- *FileChunk,
+) error {
+	return g.generateParquetFileStreaming(ctx, fileNo, specs, cfg, chunkChannel)
+}
+
+// Common parquet generation function that works with any writer
+func generateParquetCommon(
+	wrapper *writeWrapper,
+	fileNo int,
+	specs []*ColumnSpec,
+	cfg Config,
+) error {
 	pw := ParquetWriter{}
 
 	numRows := cfg.Common.Rows
@@ -224,12 +254,118 @@ func generateParquetFile(
 		return fmt.Errorf("numRows %d is not divisible by numRowGroups %d", numRows, rowGroups)
 	}
 
-	if err := pw.Init(&wrapper, numRows, rowGroups, int64(cfg.Parquet.PageSizeKB)<<10, specs); err != nil {
+	if err := pw.Init(wrapper, numRows, rowGroups, int64(cfg.Parquet.PageSizeKB)<<10, specs); err != nil {
 		return errors.Trace(err)
 	}
 	if err := pw.Write(startRowID); err != nil {
 		return errors.Trace(err)
 	}
 	pw.Close()
+	return nil
+}
+
+func generateParquetFile(
+	writer storage.ExternalFileWriter,
+	fileNo int,
+	specs []*ColumnSpec,
+	cfg Config,
+) error {
+	wrapper := &writeWrapper{Writer: writer}
+	return generateParquetCommon(wrapper, fileNo, specs, cfg)
+}
+
+func (g *ParquetGenerator) generateParquetFileStreaming(
+	ctx context.Context,
+	fileNo int,
+	specs []*ColumnSpec,
+	cfg Config,
+	chunkChannel chan<- *FileChunk,
+) error {
+	// Create a buffer to capture parquet data
+	buffer := &bytes.Buffer{}
+
+	targetChunkSize := 8 << 20 // Default 8MB
+	if cfg.Common.ChunkSizeKB > 0 {
+		targetChunkSize = cfg.Common.ChunkSizeKB * 1024
+	}
+
+	wrapper := &writeWrapper{Writer: &streamingParquetWriter{
+		buffer:       buffer,
+		chunkChannel: chunkChannel,
+		chunkSize:    targetChunkSize,
+		ctx:          ctx,
+	}}
+	return generateParquetCommon(wrapper, fileNo, specs, cfg)
+}
+
+// Custom writer for streaming parquet data in chunks
+type streamingParquetWriter struct {
+	buffer       *bytes.Buffer
+	chunkChannel chan<- *FileChunk
+	chunkSize    int
+	lastSent     int
+	ctx          context.Context
+}
+
+func (w *streamingParquetWriter) Write(ctx context.Context, data []byte) (int, error) {
+	n, err := w.buffer.Write(data)
+	if err != nil {
+		return n, err
+	}
+
+	// Send chunks when buffer reaches chunk size
+	for w.buffer.Len()-w.lastSent >= w.chunkSize {
+		chunkData := make([]byte, w.chunkSize)
+		copy(chunkData, w.buffer.Bytes()[w.lastSent:w.lastSent+w.chunkSize])
+
+		chunk := &FileChunk{
+			Data:   chunkData,
+			IsLast: false,
+		}
+
+		select {
+		case w.chunkChannel <- chunk:
+			w.lastSent += w.chunkSize
+		case <-w.ctx.Done():
+			return n, w.ctx.Err()
+		}
+	}
+
+	// Reset buffer when we've sent enough chunks to prevent memory buildup
+	if w.lastSent >= w.chunkSize*4 {
+		remaining := w.buffer.Bytes()[w.lastSent:]
+		w.buffer.Reset()
+		w.buffer.Write(remaining)
+		w.lastSent = 0
+	}
+
+	return n, nil
+}
+
+func (w *streamingParquetWriter) Close(ctx context.Context) error {
+	// Send any remaining data
+	remaining := w.buffer.Len() - w.lastSent
+	if remaining > 0 {
+		chunk := &FileChunk{
+			Data:   w.buffer.Bytes()[w.lastSent:],
+			IsLast: true,
+		}
+		select {
+		case w.chunkChannel <- chunk:
+		case <-w.ctx.Done():
+			return w.ctx.Err()
+		}
+	} else {
+		// Send empty final chunk to signal completion
+		chunk := &FileChunk{
+			Data:   []byte{},
+			IsLast: true,
+		}
+		select {
+		case w.chunkChannel <- chunk:
+		case <-w.ctx.Done():
+			return w.ctx.Err()
+		}
+	}
 	return nil
 }

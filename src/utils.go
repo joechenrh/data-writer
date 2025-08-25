@@ -76,9 +76,17 @@ func showProcess(totalFiles int) {
 }
 
 func GenerateFiles(cfg Config) error {
+	if cfg.Common.UseStreamingMode {
+		return generateFilesStreaming(cfg)
+	}
+	return generateFilesDirect(cfg)
+}
+
+// Original direct writing approach
+func generateFilesDirect(cfg Config) error {
 	start := time.Now()
 	defer func() {
-		fmt.Printf("Generate and upload took %s\n", time.Since(start))
+		fmt.Printf("Generate and upload took %s (direct mode)\n", time.Since(start))
 	}()
 
 	store, err := GetStore(cfg)
@@ -86,7 +94,6 @@ func GenerateFiles(cfg Config) error {
 		return errors.Trace(err)
 	}
 
-	//nolint: errcheck
 	defer store.Close()
 
 	specs, err := getSpecFromSQL(*sqlPath)
@@ -95,7 +102,7 @@ func GenerateFiles(cfg Config) error {
 	}
 	ctx := context.Background()
 
-	fmt.Print("Generating files... ", specs)
+	fmt.Print("Generating files (direct mode)... ", specs)
 
 	eg, _ := errgroup.WithContext(ctx)
 	eg.SetLimit(*threads)
@@ -116,9 +123,8 @@ func GenerateFiles(cfg Config) error {
 				return errors.Trace(err)
 			}
 
-			//nolint: errcheck
 			defer writer.Close(ctx)
-			if err = genFunc(writer, fileNo, specs, cfg); err != nil {
+			if err = generator.GenerateFile(writer, fileNo, specs, cfg); err != nil {
 				return errors.Trace(err)
 			}
 			writtenFiles.Add(1)
@@ -127,4 +133,49 @@ func GenerateFiles(cfg Config) error {
 	}
 
 	return errors.Trace(eg.Wait())
+}
+
+// New buffered approach with goroutine separation
+// New streaming approach that processes data in chunks
+func generateFilesStreaming(cfg Config) error {
+	start := time.Now()
+	defer func() {
+		fmt.Printf("Generate and upload took %s (streaming mode)\n", time.Since(start))
+	}()
+
+	store, err := GetStore(cfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	defer store.Close()
+
+	specs, err := getSpecFromSQL(*sqlPath)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ctx := context.Background()
+
+	fmt.Print("Generating files (streaming mode)... ", specs)
+
+	startNo, endNo := cfg.Common.StartFileNo, cfg.Common.EndFileNo
+	totalFiles := endNo - startNo
+	showProcess(totalFiles)
+
+	// Initialize chunk calculator with configurable size
+	targetChunkSize := 64 * 1024 // Default 64KB
+	if cfg.Common.ChunkSizeKB > 0 {
+		targetChunkSize = cfg.Common.ChunkSizeKB * 1024
+	}
+	chunkCalculator := NewChunkSizeCalculator(targetChunkSize)
+
+	// Log the calculated chunk parameters for visibility
+	estimatedRowSize := chunkCalculator.EstimateRowSize(specs, cfg)
+	chunkRows := chunkCalculator.CalculateChunkSize(specs, cfg)
+	fmt.Printf("Estimated row size: %d bytes, chunk size: %d rows\n", estimatedRowSize, chunkRows)
+
+	// Create streaming coordinator and let it handle all concurrency
+	coordinator := NewStreamingCoordinator(store, chunkCalculator)
+
+	return coordinator.CoordinateStreaming(ctx, startNo, endNo, specs, cfg, &writtenFiles, *threads)
 }

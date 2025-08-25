@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"strings"
 	"sync/atomic"
@@ -8,7 +9,6 @@ import (
 	"flag"
 
 	"github.com/BurntSushi/toml"
-	"github.com/pingcap/tidb/br/pkg/storage"
 )
 
 var (
@@ -19,9 +19,10 @@ var (
 )
 
 var (
-	writtenFiles atomic.Int32
-	suffix       string
-	genFunc      func(storage.ExternalFileWriter, int, []*ColumnSpec, Config) error
+	writtenFiles     atomic.Int32
+	suffix           string
+	streamingGenFunc func(context.Context, int, []*ColumnSpec, Config, chan<- *FileChunk) error
+	generator        DataGenerator
 )
 
 func main() {
@@ -30,13 +31,22 @@ func main() {
 	var config Config
 	toml.DecodeFile(*cfgPath, &config)
 
+	// Initialize chunk calculator and generators
+	targetChunkSize := 64 * 1024 // Default 64KB
+	if config.Common.ChunkSizeKB > 0 {
+		targetChunkSize = config.Common.ChunkSizeKB * 1024
+	}
+	chunkCalculator := NewChunkSizeCalculator(targetChunkSize)
+
 	switch strings.ToLower(config.Common.FileFormat) {
 	case "parquet":
 		suffix = "parquet"
-		genFunc = generateParquetFile
+		generator = NewParquetGenerator(chunkCalculator)
+		streamingGenFunc = generator.GenerateFileStreaming
 	case "csv":
 		suffix = "csv"
-		genFunc = generateCSVFile
+		generator = NewCSVGenerator(chunkCalculator)
+		streamingGenFunc = generator.GenerateFileStreaming
 	default:
 		log.Fatalf("Unsupported file format: %s", config.Common.FileFormat)
 	}
