@@ -1,0 +1,8 @@
+[common]
+path = ""
+prefix = "test"
+format = "parquet"
+
+[parquet]
+row_groups = 1
+page_size_kb = 1024

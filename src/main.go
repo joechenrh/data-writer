@@ -12,10 +12,12 @@ import (
 )
 
 var (
-	operation = flag.String("op", "create", "create/delete/show, default is create")
+	operation = flag.String("op", "create", "create/delete/show/convert, default is create")
 	sqlPath   = flag.String("sql", "", "sql path")
 	cfgPath   = flag.String("cfg", "", "config path")
 	threads   = flag.Int("threads", 16, "threads")
+	csvPath   = flag.String("csv", "", "path to CSV file for conversion (used with -op convert)")
+	outputPath = flag.String("output", "", "output path for converted parquet file (used with -op convert)")
 )
 
 var (
@@ -63,6 +65,10 @@ func main() {
 	case "create":
 		if err := GenerateFiles(config); err != nil {
 			log.Fatalf("Failed to generate files: %v", err)
+		}
+	case "convert":
+		if err := ConvertCSVToParquet(config); err != nil {
+			log.Fatalf("Failed to convert CSV to Parquet: %v", err)
 		}
 	default:
 		log.Fatalf("Unknown operation: %s", *operation)
