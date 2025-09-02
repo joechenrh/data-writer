@@ -179,3 +179,36 @@ func generateFilesStreaming(cfg Config) error {
 
 	return coordinator.CoordinateStreaming(ctx, startNo, endNo, specs, cfg, &writtenFiles, *threads)
 }
+
+// ConvertCSVToParquet converts a CSV file to Parquet format
+func ConvertCSVToParquet(cfg Config) error {
+	if *csvPath == "" {
+		return fmt.Errorf("CSV file path is required for conversion (-csv flag)")
+	}
+	if *sqlPath == "" {
+		return fmt.Errorf("SQL schema file path is required for conversion (-sql flag)")
+	}
+	if *outputPath == "" {
+		return fmt.Errorf("output file path is required for conversion (-output flag)")
+	}
+
+	start := time.Now()
+	defer func() {
+		fmt.Printf("CSV to Parquet conversion took %s\n", time.Since(start))
+	}()
+
+	// Load schema from SQL file
+	specs, err := getSpecFromSQL(*sqlPath)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	fmt.Printf("Converting CSV file %s to Parquet file %s using schema with %d columns\n", 
+		*csvPath, *outputPath, len(specs))
+
+	// Create converter
+	converter := NewCSVToParquetConverter()
+
+	// Convert CSV to Parquet
+	return converter.ConvertCSVToParquet(*csvPath, *outputPath, specs, cfg)
+}
