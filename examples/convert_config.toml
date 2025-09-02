@@ -1,6 +1,4 @@
 [common]
-path = ""
-prefix = "test"
 format = "parquet"
 
 [parquet]
