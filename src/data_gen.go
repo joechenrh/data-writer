@@ -100,9 +100,9 @@ func (c *ColumnSpec) generateString(rng *rand.Rand) string {
 		return uuid.New().String()
 	}
 
-	lower := c.TypeLen * 3 / 4
+	lower := c.MinLen
 	upper := c.TypeLen
-	length := rng.Intn(upper-lower) + lower
+	length := rng.Intn(upper-lower+1) + lower
 
 	b := make([]byte, length)
 	rng.Read(b)
@@ -223,10 +223,10 @@ func (c *ColumnSpec) generateDateParquet(out []int32, defLevel []int16, rng *ran
 func (c *ColumnSpec) generateStringParquet(_ int, out []parquet.ByteArray, defLevel []int16, rng *rand.Rand) {
 	nullMap := c.generateBatchNull(len(out), rng)
 
-	lower := c.TypeLen * 3 / 4
+	lower := c.MinLen
 	upper := c.TypeLen
+	slen := rng.Intn(upper-lower+1) + lower
 
-	slen := rng.Intn(upper-lower) + lower
 	buf := make([]byte, slen*len(out))
 	rng.Read(buf)
 	for i := range buf {

@@ -39,6 +39,7 @@ type ColumnSpec struct {
 	Converted schema.ConvertedType // used for parquet file
 
 	TypeLen   int // length of the type, e.g., 64 for bigint, 32 for int
+	MinLen    int // minimum length for string types, defaults to TypeLen * 0.75
 	Precision int // used for decimal type, not implemented yet
 	Scale     int // used for decimal type, not implemented yet
 
@@ -66,6 +67,8 @@ func (c *ColumnSpec) parseComment(comment string) {
 			c.NullPercent, _ = strconv.Atoi(v)
 		case "max_length":
 			c.TypeLen, _ = strconv.Atoi(v)
+		case "min_length":
+			c.MinLen, _ = strconv.Atoi(v)
 		case "mean":
 			c.Mean, _ = strconv.Atoi(v)
 		case "stddev":
@@ -107,28 +110,28 @@ var DefaultSpecs = map[byte]*ColumnSpec{
 	mysql.TypeTiny: {
 		SQLType:   "tinyint",
 		Type:      parquet.Types.Int32,
-		Converted: schema.ConvertedTypes.None,
+		Converted: schema.ConvertedTypes.Int8,
 		TypeLen:   8,
 		Signed:    true,
 	},
 	mysql.TypeShort: {
 		SQLType:   "smallint",
 		Type:      parquet.Types.Int32,
-		Converted: schema.ConvertedTypes.None,
+		Converted: schema.ConvertedTypes.Int32,
 		TypeLen:   16,
 		Signed:    true,
 	},
 	mysql.TypeInt24: {
 		SQLType:   "mediumint",
 		Type:      parquet.Types.Int32,
-		Converted: schema.ConvertedTypes.None,
+		Converted: schema.ConvertedTypes.Int32,
 		TypeLen:   24,
 		Signed:    true,
 	},
 	mysql.TypeLong: {
 		SQLType:   "int",
 		Type:      parquet.Types.Int32,
-		Converted: schema.ConvertedTypes.None,
+		Converted: schema.ConvertedTypes.Int32,
 		TypeLen:   32,
 		Signed:    true,
 	},
@@ -155,16 +158,19 @@ var DefaultSpecs = map[byte]*ColumnSpec{
 		SQLType:   "varchar",
 		Type:      parquet.Types.ByteArray,
 		Converted: schema.ConvertedTypes.None,
+		TypeLen:   64,
 	},
 	mysql.TypeBlob: {
 		SQLType:   "blob",
 		Type:      parquet.Types.ByteArray,
 		Converted: schema.ConvertedTypes.None,
+		TypeLen:   64,
 	},
 	mysql.TypeString: {
 		SQLType:   "char",
 		Type:      parquet.Types.ByteArray,
 		Converted: schema.ConvertedTypes.None,
+		TypeLen:   64,
 	},
 }
 
@@ -219,6 +225,12 @@ func getSpecFromSQL(sqlPath string) ([]*ColumnSpec, error) {
 		if col.Comment != "" {
 			spec.parseComment(col.Comment)
 		}
+
+		if spec.MinLen == 0 {
+			spec.MinLen = int(float64(spec.TypeLen) * 0.75)
+		}
+		spec.MinLen = min(spec.TypeLen, spec.MinLen)
+
 		specs = append(specs, spec)
 	}
 
