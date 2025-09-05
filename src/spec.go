@@ -58,6 +58,7 @@ func (c *ColumnSpec) parseComment(comment string) {
 		return
 	}
 
+	comment = strings.ReplaceAll(comment, " ", "")
 	opts := strings.Split(comment, ",")
 	for _, opt := range opts {
 		s := strings.Split(opt, "=")
@@ -172,6 +173,58 @@ var DefaultSpecs = map[byte]*ColumnSpec{
 		Converted: schema.ConvertedTypes.None,
 		TypeLen:   64,
 	},
+}
+
+// String returns a string representation of the ColumnSpec
+func (c *ColumnSpec) String() string {
+	var builder strings.Builder
+
+	builder.WriteString("ColumnSpec{")
+	builder.WriteString("Name: " + c.OrigName)
+	builder.WriteString(", SQLType: " + c.SQLType)
+	builder.WriteString(", TypeLen: " + strconv.Itoa(c.TypeLen))
+
+	if c.MinLen > 0 {
+		builder.WriteString(", MinLen: " + strconv.Itoa(c.MinLen))
+	}
+
+	if c.NullPercent > 0 {
+		builder.WriteString(", NullPercent: " + strconv.Itoa(c.NullPercent))
+	}
+
+	if c.IsUnique {
+		builder.WriteString(", IsUnique: true")
+	}
+
+	if c.Order != NumericNoOrder {
+		switch c.Order {
+		case NumericTotalOrder:
+			builder.WriteString(", Order: total_order")
+		case NumericPartialOrder:
+			builder.WriteString(", Order: partial_order")
+		case NumericRandomOrder:
+			builder.WriteString(", Order: random_order")
+		}
+	}
+
+	if c.Mean != 0 {
+		builder.WriteString(", Mean: " + strconv.Itoa(c.Mean))
+	}
+
+	if c.StdDev != 0 {
+		builder.WriteString(", StdDev: " + strconv.Itoa(c.StdDev))
+	}
+
+	if c.Precision > 0 {
+		builder.WriteString(", Precision: " + strconv.Itoa(c.Precision))
+	}
+
+	if c.Scale > 0 {
+		builder.WriteString(", Scale: " + strconv.Itoa(c.Scale))
+	}
+
+	builder.WriteString("}")
+	return builder.String()
 }
 
 func (c *ColumnSpec) Clone() *ColumnSpec {
