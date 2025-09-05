@@ -102,7 +102,8 @@ func generateFilesDirect(cfg Config) error {
 	}
 	ctx := context.Background()
 
-	fmt.Print("Generating files (direct mode)... ", specs)
+	fmt.Println("Specs: ", specs)
+	fmt.Println("Generating files (direct mode)... ")
 
 	eg, _ := errgroup.WithContext(ctx)
 	eg.SetLimit(*threads)
