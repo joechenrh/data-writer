@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"runtime"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -179,4 +182,114 @@ func generateFilesStreaming(cfg Config) error {
 	coordinator := NewStreamingCoordinator(store, chunkCalculator)
 
 	return coordinator.CoordinateStreaming(ctx, startNo, endNo, specs, cfg, &writtenFiles, *threads)
+}
+
+// UploadLocalFiles uploads all files from a local directory to the configured remote path
+func UploadLocalFiles(cfg Config, localDir string) error {
+	start := time.Now()
+	defer func() {
+		fmt.Printf("Upload took %s\n", time.Since(start))
+	}()
+
+	// Validate local directory exists
+	if _, err := os.Stat(localDir); os.IsNotExist(err) {
+		return errors.Errorf("local directory does not exist: %s", localDir)
+	}
+
+	store, err := GetStore(cfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer store.Close()
+
+	// Collect all files to upload
+	var filesToUpload []string
+	err = filepath.Walk(localDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		// Skip directories
+		if info.IsDir() {
+			return nil
+		}
+		filesToUpload = append(filesToUpload, path)
+		return nil
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if len(filesToUpload) == 0 {
+		fmt.Println("No files to upload")
+		return nil
+	}
+
+	fmt.Printf("Found %d files to upload\n", len(filesToUpload))
+
+	ctx := context.Background()
+	eg, _ := errgroup.WithContext(ctx)
+	eg.SetLimit(*threads)
+
+	// Progress tracking
+	var uploadedFiles atomic.Int32
+	go func() {
+		bar := progressbar.Default(int64(len(filesToUpload)))
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+
+		var prev int
+		for range ticker.C {
+			cur := int(uploadedFiles.Load())
+			bar.Add(cur - prev)
+			prev = cur
+			if cur >= len(filesToUpload) {
+				break
+			}
+		}
+	}()
+
+	// Upload each file
+	for _, localPath := range filesToUpload {
+		filePath := localPath
+		eg.Go(func() error {
+			// Get relative path from localDir
+			relPath, err := filepath.Rel(localDir, filePath)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			// Convert Windows path separator to Unix-style for remote storage
+			remotePath := filepath.ToSlash(relPath)
+
+			// Read local file
+			data, err := os.ReadFile(filePath)
+			if err != nil {
+				return errors.Annotatef(err, "failed to read local file: %s", filePath)
+			}
+
+			// Create remote file writer
+			writer, err := store.Create(ctx, remotePath, nil)
+			if err != nil {
+				return errors.Annotatef(err, "failed to create remote file: %s", remotePath)
+			}
+			defer writer.Close(ctx)
+
+			// Write data
+			_, err = writer.Write(ctx, data)
+			if err != nil {
+				return errors.Annotatef(err, "failed to upload file: %s", remotePath)
+			}
+
+			uploadedFiles.Add(1)
+			log.Printf("Uploaded: %s -> %s", filePath, remotePath)
+			return nil
+		})
+	}
+
+	if err := eg.Wait(); err != nil {
+		return errors.Trace(err)
+	}
+
+	fmt.Printf("\nSuccessfully uploaded %d files\n", len(filesToUpload))
+	return nil
 }

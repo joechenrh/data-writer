@@ -15,6 +15,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	_ "github.com/pingcap/tidb/pkg/planner/core" // to setup expression.EvalSimpleAst for in core_init
 	"github.com/pingcap/tidb/pkg/types"
+
+	_ "github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/mock"
 )
 
@@ -108,6 +110,20 @@ var DefaultSpecs = map[byte]*ColumnSpec{
 		Type:      parquet.Types.Int64,
 		Converted: schema.ConvertedTypes.TimestampMicros,
 	},
+	mysql.TypeDuration: {
+		SQLType:   "time",
+		Type:      parquet.Types.Int64,
+		Converted: schema.ConvertedTypes.Int64,
+		TypeLen:   8,
+		Signed:    true,
+	},
+	mysql.TypeYear: {
+		SQLType:   "year",
+		Type:      parquet.Types.Int32,
+		Converted: schema.ConvertedTypes.Int32,
+		TypeLen:   8,
+		Signed:    true,
+	},
 	mysql.TypeTiny: {
 		SQLType:   "tinyint",
 		Type:      parquet.Types.Int32,
@@ -167,8 +183,21 @@ var DefaultSpecs = map[byte]*ColumnSpec{
 		Converted: schema.ConvertedTypes.None,
 		TypeLen:   64,
 	},
+	mysql.TypeTinyBlob: {
+		SQLType:   "tinyblob",
+		Type:      parquet.Types.ByteArray,
+		Converted: schema.ConvertedTypes.None,
+		TypeLen:   64,
+	},
 	mysql.TypeString: {
 		SQLType:   "char",
+		Type:      parquet.Types.ByteArray,
+		Converted: schema.ConvertedTypes.None,
+		TypeLen:   64,
+	},
+	// TODO(joechenrh): check if we can use nested type for JSON
+	mysql.TypeJSON: {
+		SQLType:   "json",
 		Type:      parquet.Types.ByteArray,
 		Converted: schema.ConvertedTypes.None,
 		TypeLen:   64,
@@ -234,7 +263,7 @@ func (c *ColumnSpec) Clone() *ColumnSpec {
 
 func getTableInfoBySQL(createTableSQL string) (table *model.TableInfo, err error) {
 	p := parser.New()
-	p.SetSQLMode(mysql.ModeNone)
+	p.SetSQLMode(mysql.ModeANSIQuotes)
 
 	stmt, err := p.ParseOneStmt(createTableSQL, "", "")
 	if err != nil {
@@ -250,13 +279,47 @@ func getTableInfoBySQL(createTableSQL string) (table *model.TableInfo, err error
 	return nil, errors.New("not a CREATE TABLE statement")
 }
 
-func getSpecFromSQL(sqlPath string) ([]*ColumnSpec, error) {
+// readAndCleanSQL reads SQL file and cleans up comments and extra content
+func readAndCleanSQL(sqlPath string) (string, error) {
 	data, err := os.ReadFile(sqlPath)
+	if err != nil {
+		return "", err
+	}
+
+	// Filter out lines containing /* comments at the beginning of file
+	lines := strings.Split(string(data), "\n")
+	var filteredLines []string
+	startIndex := 0
+
+	// Skip lines that start with /* at the beginning of the file
+	for i, line := range lines {
+		trimmedLine := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmedLine, "/*") && trimmedLine != "" {
+			startIndex = i
+			break
+		}
+	}
+
+	// Keep all lines from the first non-comment line onwards
+	filteredLines = lines[startIndex:]
+	query := strings.Join(filteredLines, "\n")
+
+	// Find the last closing parenthesis and truncate everything after it except ";"
+	lastParenIndex := strings.LastIndex(query, ")")
+	if lastParenIndex != -1 {
+		// Keep everything up to and including the last ")" and add ";"
+		query = query[:lastParenIndex+1] + ";"
+	}
+
+	return query, nil
+}
+
+func getSpecFromSQL(sqlPath string) ([]*ColumnSpec, error) {
+	query, err := readAndCleanSQL(sqlPath)
 	if err != nil {
 		return nil, err
 	}
 
-	query := string(data)
 	tbInfo, err := getTableInfoBySQL(query)
 	if err != nil {
 		return nil, err
@@ -264,7 +327,11 @@ func getSpecFromSQL(sqlPath string) ([]*ColumnSpec, error) {
 
 	specs := make([]*ColumnSpec, 0, len(tbInfo.Columns))
 	for _, col := range tbInfo.Columns {
-		spec := DefaultSpecs[col.GetType()].Clone()
+		spec, ok := DefaultSpecs[col.GetType()]
+		if !ok {
+			return nil, errors.New("unsupported column type: " + strconv.Itoa(int(col.GetType())))
+		}
+		spec = spec.Clone()
 		spec.OrigName = col.Name.L
 
 		col.FieldType.AddFlag(mysql.PriKeyFlag | mysql.UniqueKeyFlag)

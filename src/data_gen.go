@@ -113,6 +113,11 @@ func (c *ColumnSpec) generateString(rng *rand.Rand) string {
 	return string(hack.String(b))
 }
 
+// TODO(joechenrh): implement a real JSON generator
+func (c *ColumnSpec) generateJSON(rng *rand.Rand) string {
+	return "[1,2,3,4,5]"
+}
+
 func (c *ColumnSpec) generateRandomTime(format string) string {
 	now := time.Now()
 
@@ -131,18 +136,22 @@ func (c *ColumnSpec) generate(rowID int, rng *rand.Rand) (any, int16) {
 	}
 
 	switch c.SQLType {
-	case "int":
+	case "int", "tinyint", "smallint", "mediumint", "decimal":
 		return c.generateInt(rowID, rng), 1
-	case "bigint", "double":
+	case "bigint", "double", "float":
 		return c.generateInt(rowID, rng), 1
-	case "float64":
-		return c.generateInt(rowID, rng), 1
-	case "char", "varchar", "varbinary", "blob":
+	case "char", "varchar", "varbinary", "blob", "text", "tinyblob":
 		return c.generateString(rng), 1
+	case "json":
+		return c.generateJSON(rng), 1
 	case "timestamp", "datetime":
 		return c.generateRandomTime(time.DateTime), 1
 	case "date":
 		return c.generateRandomTime(time.DateOnly), 1
+	case "time":
+		return c.generateRandomTime(time.TimeOnly), 1
+	case "year":
+		return rng.Intn(70) + 1970, 1
 	}
 	return nil, 0
 }
@@ -196,6 +205,18 @@ func (c *ColumnSpec) generateFloat32Parquet(rowID int, out []float32, defLevel [
 	}
 }
 
+func (c *ColumnSpec) generateYearParquet(out []int32, defLevel []int16, rng *rand.Rand) {
+	nullMap := c.generateBatchNull(len(out), rng)
+	for i := range len(out) {
+		if nullMap[i] {
+			defLevel[i] = 0
+		} else {
+			defLevel[i] = 1
+			out[i] = int32(rng.Int63()%50 + 2000)
+		}
+	}
+}
+
 func (c *ColumnSpec) generateTimestampParquet(out []int64, defLevel []int16, rng *rand.Rand) {
 	nullMap := c.generateBatchNull(len(out), rng)
 	for i := range len(out) {
@@ -216,6 +237,18 @@ func (c *ColumnSpec) generateDateParquet(out []int32, defLevel []int16, rng *ran
 		} else {
 			defLevel[i] = 1
 			out[i] = rng.Int31() & 16383
+		}
+	}
+}
+
+func (c *ColumnSpec) generateJSONParquet(_ int, out []parquet.ByteArray, defLevel []int16, rng *rand.Rand) {
+	nullMap := c.generateBatchNull(len(out), rng)
+	for i := range len(out) {
+		if nullMap[i] {
+			defLevel[i] = 0
+		} else {
+			defLevel[i] = 1
+			out[i] = []byte("[1,2,3,4,5]")
 		}
 	}
 }

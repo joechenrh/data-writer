@@ -146,7 +146,7 @@ func (pw *ParquetWriter) writeNextColumn(rgw file.SerialRowGroupWriter, rowIDSta
 
 	for range rounds {
 		switch spec.SQLType {
-		case "bigint":
+		case "bigint", "decimal":
 			buf := valueBuffer.([]int64)
 			spec.generateInt64Parquet(rowIDStart, buf, defLevels, pw.rng)
 			w, _ := cw.(*file.Int64ColumnChunkWriter)
@@ -166,9 +166,14 @@ func (pw *ParquetWriter) writeNextColumn(rgw file.SerialRowGroupWriter, rowIDSta
 			spec.generateFloat64Parquet(rowIDStart, buf, defLevels, pw.rng)
 			w, _ := cw.(*file.Float64ColumnChunkWriter)
 			num, err = w.WriteBatch(buf, defLevels, nil)
-		case "varchar", "char", "blob":
+		case "varchar", "char", "blob", "tinyblob":
 			buf := valueBuffer.([]parquet.ByteArray)
 			spec.generateStringParquet(rowIDStart, buf, defLevels, pw.rng)
+			w, _ := cw.(*file.ByteArrayColumnChunkWriter)
+			num, err = w.WriteBatch(buf, defLevels, nil)
+		case "json":
+			buf := valueBuffer.([]parquet.ByteArray)
+			spec.generateJSONParquet(rowIDStart, buf, defLevels, pw.rng)
 			w, _ := cw.(*file.ByteArrayColumnChunkWriter)
 			num, err = w.WriteBatch(buf, defLevels, nil)
 		case "date":
@@ -180,6 +185,16 @@ func (pw *ParquetWriter) writeNextColumn(rgw file.SerialRowGroupWriter, rowIDSta
 			buf := valueBuffer.([]int64)
 			spec.generateTimestampParquet(buf, defLevels, pw.rng)
 			w, _ := cw.(*file.Int64ColumnChunkWriter)
+			num, err = w.WriteBatch(buf, defLevels, nil)
+		case "time":
+			buf := valueBuffer.([]int64)
+			spec.generateTimestampParquet(buf, defLevels, pw.rng)
+			w, _ := cw.(*file.Int64ColumnChunkWriter)
+			num, err = w.WriteBatch(buf, defLevels, nil)
+		case "year":
+			buf := valueBuffer.([]int32)
+			spec.generateYearParquet(buf, defLevels, pw.rng)
+			w, _ := cw.(*file.Int32ColumnChunkWriter)
 			num, err = w.WriteBatch(buf, defLevels, nil)
 		default:
 			return 0, errors.Errorf("unsupported column writer type: %s", spec.SQLType)
