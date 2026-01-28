@@ -152,7 +152,7 @@ func generateFilesDirect(cfg Config) error {
 			}
 
 			defer writer.Close(ctx)
-			if err = generator.GenerateFile(writer, fileNo, specs, cfg); err != nil {
+			if err = generator.GenerateFile(ctx, writer, fileNo, specs, cfg); err != nil {
 				return errors.Trace(err)
 			}
 			writtenFiles.Add(1)
@@ -191,15 +191,11 @@ func generateFilesStreaming(cfg Config) error {
 	showProcess(totalFiles)
 
 	// Initialize chunk calculator with configurable size
-	targetChunkSize := 64 * 1024 // Default 64KB
-	if cfg.Common.ChunkSizeKB > 0 {
-		targetChunkSize = cfg.Common.ChunkSizeKB * 1024
-	}
-	chunkCalculator := NewChunkSizeCalculator(targetChunkSize)
+	chunkCalculator := NewChunkSizeCalculator(&cfg)
 
 	// Log the calculated chunk parameters for visibility
-	estimatedRowSize := chunkCalculator.EstimateRowSize(specs, cfg)
-	chunkRows := chunkCalculator.CalculateChunkSize(specs, cfg)
+	estimatedRowSize := chunkCalculator.EstimateRowSize(specs)
+	chunkRows := chunkCalculator.CalculateChunkSize(specs)
 	fmt.Printf("Estimated row size: %d bytes, chunk size: %d rows\n", estimatedRowSize, chunkRows)
 
 	// Create streaming coordinator and let it handle all concurrency

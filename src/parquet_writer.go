@@ -267,15 +267,15 @@ func (pw *ParquetWriter) Write(startRowID int) error {
 
 // ParquetGenerator implements DataGenerator interface for Parquet files
 type ParquetGenerator struct {
-	chunkCalculator ChunkCalculator
 }
 
 // NewParquetGenerator creates a new Parquet generator
-func NewParquetGenerator(chunkCalculator ChunkCalculator) *ParquetGenerator {
-	return &ParquetGenerator{chunkCalculator: chunkCalculator}
+func NewParquetGenerator() *ParquetGenerator {
+	return &ParquetGenerator{}
 }
 
 func (g *ParquetGenerator) GenerateFile(
+	ctx context.Context,
 	writer storage.ExternalFileWriter,
 	fileNo int,
 	specs []*ColumnSpec,

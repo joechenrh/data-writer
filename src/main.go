@@ -20,10 +20,10 @@ var (
 )
 
 var (
-	writtenFiles     atomic.Int32
-	suffix           string
-	streamingGenFunc func(context.Context, int, []*ColumnSpec, Config, chan<- *FileChunk) error
-	generator        DataGenerator
+	writtenFiles       atomic.Int32
+	suffix             string
+	streamingGenerator func(context.Context, int, []*ColumnSpec, Config, chan<- *FileChunk) error
+	generator          DataGenerator
 )
 
 func main() {
@@ -32,22 +32,17 @@ func main() {
 	var config Config
 	toml.DecodeFile(*cfgPath, &config)
 
-	// Initialize chunk calculator and generators
-	targetChunkSize := 64 * 1024 // Default 64KB
-	if config.Common.ChunkSizeKB > 0 {
-		targetChunkSize = config.Common.ChunkSizeKB * 1024
-	}
-	chunkCalculator := NewChunkSizeCalculator(targetChunkSize)
+	chunkCalculator := NewChunkSizeCalculator(&config)
 
 	switch strings.ToLower(config.Common.FileFormat) {
 	case "parquet":
 		suffix = "parquet"
-		generator = NewParquetGenerator(chunkCalculator)
-		streamingGenFunc = generator.GenerateFileStreaming
+		generator = NewParquetGenerator()
+		streamingGenerator = generator.GenerateFileStreaming
 	case "csv":
 		suffix = "csv"
 		generator = NewCSVGenerator(chunkCalculator)
-		streamingGenFunc = generator.GenerateFileStreaming
+		streamingGenerator = generator.GenerateFileStreaming
 	default:
 		log.Fatalf("Unsupported file format: %s", config.Common.FileFormat)
 	}

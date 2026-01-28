@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"golang.org/x/sync/errgroup"
@@ -18,19 +19,16 @@ type FileChunk struct {
 
 // ChunkSizeCalculator for determining optimal chunk sizes
 type ChunkSizeCalculator struct {
-	targetChunkSizeBytes int
+	cfg *Config
 }
 
 // NewChunkSizeCalculator creates a new chunk size calculator
-func NewChunkSizeCalculator(targetSizeBytes int) *ChunkSizeCalculator {
-	if targetSizeBytes <= 0 {
-		targetSizeBytes = 64 * 1024 // Default 64KB
-	}
-	return &ChunkSizeCalculator{targetChunkSizeBytes: targetSizeBytes}
+func NewChunkSizeCalculator(cfg *Config) *ChunkSizeCalculator {
+	return &ChunkSizeCalculator{cfg: cfg}
 }
 
 // EstimateRowSize calculates the approximate size of a single row in bytes
-func (c *ChunkSizeCalculator) EstimateRowSize(specs []*ColumnSpec, cfg Config) int {
+func (c *ChunkSizeCalculator) EstimateRowSize(specs []*ColumnSpec) int {
 	totalSize := 0
 
 	for _, spec := range specs {
@@ -60,7 +58,7 @@ func (c *ChunkSizeCalculator) EstimateRowSize(specs []*ColumnSpec, cfg Config) i
 	}
 
 	// Add overhead for delimiters (CSV) or encoding (Parquet)
-	if cfg.Common.FileFormat == "csv" {
+	if c.cfg.Common.FileFormat == "csv" {
 		totalSize += len(specs)
 	} else {
 		totalSize = int(float64(totalSize) * 1.2) // 20% overhead for Parquet encoding
@@ -70,26 +68,18 @@ func (c *ChunkSizeCalculator) EstimateRowSize(specs []*ColumnSpec, cfg Config) i
 }
 
 // CalculateChunkSize determines the optimal number of rows per chunk
-func (c *ChunkSizeCalculator) CalculateChunkSize(specs []*ColumnSpec, cfg Config) int {
-	rowSize := c.EstimateRowSize(specs, cfg)
+func (c *ChunkSizeCalculator) CalculateChunkSize(specs []*ColumnSpec) int {
+	rowSize := c.EstimateRowSize(specs)
 	if rowSize <= 0 {
 		rowSize = 100 // Fallback
 	}
 
-	chunkRows := max(c.targetChunkSizeBytes/rowSize, 1)
-
-	// Ensure reasonable bounds
-	minChunkRows := 100
-	maxChunkRows := 10000
-
-	if chunkRows < minChunkRows {
-		chunkRows = minChunkRows
-	}
-	if chunkRows > maxChunkRows {
-		chunkRows = maxChunkRows
+	targetSizeBytes := c.cfg.Common.ChunkSizeKB * 1024
+	if targetSizeBytes == 0 {
+		targetSizeBytes = 32 * units.KiB // Default 32KB
 	}
 
-	return chunkRows
+	return max(targetSizeBytes/rowSize, 1)
 }
 
 // StreamingCoordinator manages lock-free streaming operations with paired goroutines
@@ -166,7 +156,7 @@ func (sc *StreamingCoordinator) CoordinateStreaming(
 			})
 
 			// Generate file in current goroutine, sending chunks to its writer
-			err := streamingGenFunc(ctx, fileNo, specs, cfg, chunkChannel)
+			err := streamingGenerator(ctx, fileNo, specs, cfg, chunkChannel)
 			close(chunkChannel)
 
 			if err != nil {
