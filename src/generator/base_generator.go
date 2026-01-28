@@ -2,38 +2,41 @@ package generator
 
 import (
 	"context"
-	"dataWriter/src/config"
-	"dataWriter/src/spec"
-	"dataWriter/src/util"
 	"fmt"
 	"strings"
 	"time"
+
+	"dataWriter/src/config"
+	"dataWriter/src/spec"
+	"dataWriter/src/util"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"golang.org/x/sync/errgroup"
 )
 
-type fileGenerator struct {
-	SpecificGenerator
+// Orchestrator orchestrates file generation for a single format.
+type Orchestrator struct {
+	FileGenerator
 
-	*config.Config
-
-	fileSuffix string
-	specs      []*spec.ColumnSpec
-	store      storage.ExternalStorage
-	logger     *util.ProgressLogger
+	cfg    *config.Config
+	store  storage.ExternalStorage
+	logger *util.ProgressLogger
 }
 
-func newFileGenerator(cfg *config.Config, sqlPath string) (*fileGenerator, error) {
-	store, err := config.GetStore(cfg)
+// NewOrchestrator creates a orchestrator using the config and SQL schema.
+func NewOrchestrator(cfg *config.Config, sqlPath string) (*Orchestrator, error) {
+	specs, err := spec.GetSpecFromSQL(sqlPath)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	defer store.Close()
+	gen, err := newGenerator(cfg, specs)
+	if err != nil {
+		return nil, err
+	}
 
-	specs, err := spec.GetSpecFromSQL(sqlPath)
+	store, err := config.GetStore(cfg)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -44,157 +47,132 @@ func newFileGenerator(cfg *config.Config, sqlPath string) (*fileGenerator, error
 		time.Second,
 	)
 
-	return &fileGenerator{
-		Config: cfg,
-		logger: logger,
-		specs:  specs,
+	return &Orchestrator{
+		FileGenerator: gen,
+
+		cfg:    cfg,
 		store:  store,
+		logger: logger,
 	}, nil
 }
 
-func (fg *fileGenerator) openWriter(
+func newGenerator(cfg *config.Config, specs []*spec.ColumnSpec) (FileGenerator, error) {
+	switch strings.ToLower(cfg.Common.FileFormat) {
+	case "parquet":
+		return newParquetGenerator(cfg, specs)
+	case "csv":
+		return newCSVGenerator(cfg, specs)
+	default:
+		return nil, errors.Errorf("unsupported file format: %s", cfg.Common.FileFormat)
+	}
+}
+
+func (o *Orchestrator) openWriter(
 	ctx context.Context,
 	fileID int,
 ) (storage.ExternalFileWriter, error) {
 	var fileName string
-	if fg.Common.Folders <= 1 {
+	if o.cfg.Common.Folders <= 1 {
 		fileName = fmt.Sprintf("%s.%d.%s",
-			fg.Common.Prefix, fileID, fg.fileSuffix)
+			o.cfg.Common.Prefix, fileID, o.FileSuffix())
 	} else {
-		folderID := fileID % fg.Common.Folders
+		folderID := fileID % o.cfg.Common.Folders
 		fileName = fmt.Sprintf("part%05d/%s.%d.%s",
-			folderID, fg.Common.Prefix, fileID, fg.fileSuffix)
+			folderID, o.cfg.Common.Prefix, fileID, o.FileSuffix())
 	}
 
-	writer, err := fg.store.Create(ctx, fileName, &storage.WriterOption{
+	writer, err := o.store.Create(ctx, fileName, &storage.WriterOption{
 		Concurrency: 8,
 	})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	return &writerWithStats{writer: writer, logger: fg.logger}, nil
+	return &writerWithStats{writer: writer, logger: o.logger}, nil
 }
 
-func (fg *fileGenerator) Generate(threads int) error {
+func (o *Orchestrator) Close() {
+	o.store.Close()
+}
+
+func (o *Orchestrator) generateDirect(ctx context.Context, fileNo int) error {
+	writer, err := o.openWriter(ctx, fileNo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	defer writer.Close(ctx)
+	if err = o.GenerateFile(ctx, writer, fileNo); err != nil {
+		return errors.Trace(err)
+	}
+	o.logger.UpdateFiles(1)
+	return nil
+}
+
+func (o *Orchestrator) generateStreaming(ctx context.Context, fileNo int) error {
+	var eg errgroup.Group
+
+	chunkChannel := make(chan *util.FileChunk, 4)
+	eg.Go(func() error {
+		defer close(chunkChannel)
+		return o.GenerateFileStreaming(ctx, fileNo, chunkChannel)
+	})
+
+	eg.Go(func() error {
+		writer, err := o.openWriter(ctx, fileNo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer writer.Close(ctx)
+		for {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case chunk, ok := <-chunkChannel:
+				if !ok {
+					return nil
+				}
+				if _, err := writer.Write(ctx, chunk.Data); err != nil {
+					return errors.Trace(err)
+				}
+
+				if chunk.IsLast {
+					return nil
+				}
+			}
+		}
+	})
+
+	if err := eg.Wait(); err != nil {
+		return err
+	}
+
+	o.logger.UpdateFiles(1)
+	return nil
+}
+
+// Run creates files directly without streaming.
+func (o *Orchestrator) Run(streaming bool, threads int) error {
 	start := time.Now()
 	defer func() {
-		fmt.Printf("Generate and upload took %s (direct mode)\n", time.Since(start))
+		fmt.Printf("Generate and upload took %s\n", time.Since(start))
 	}()
 
 	ctx := context.Background()
 	eg, _ := errgroup.WithContext(ctx)
 	eg.SetLimit(threads)
 
-	startNo, endNo := fg.Common.StartFileNo, fg.Common.EndFileNo
+	startNo := o.cfg.Common.StartFileNo
+	endNo := o.cfg.Common.EndFileNo
 	for fileNo := startNo; fileNo < endNo; fileNo++ {
+		fileID := fileNo
 		eg.Go(func() error {
-			writer, err := fg.openWriter(ctx, fileNo)
-			if err != nil {
-				return errors.Trace(err)
+			if streaming {
+				return o.generateStreaming(ctx, fileID)
 			}
-
-			defer writer.Close(ctx)
-			if err = fg.GenerateOneFile(ctx, writer, fileNo); err != nil {
-				return errors.Trace(err)
-			}
-			fg.logger.UpdateFiles(1)
-			return nil
+			return o.generateDirect(ctx, fileID)
 		})
 	}
 
 	return errors.Trace(eg.Wait())
-}
-
-func (fg *fileGenerator) GenerateStreaming(threads int) error {
-	start := time.Now()
-	defer func() {
-		fmt.Printf("Generate and upload took %s (streaming mode)\n", time.Since(start))
-	}()
-
-	store, err := config.GetStore(fg.Config)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer store.Close()
-
-	ctx := context.Background()
-
-	startNo, endNo := fg.Common.StartFileNo, fg.Common.EndFileNo
-
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	var eg errgroup.Group
-	eg.SetLimit(threads)
-
-	// Create one generator-writer pair for each file
-	for i := startNo; i < endNo; i++ {
-		eg.Go(func() error {
-			writer, err := fg.openWriter(ctx, i)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			chunkChannel := make(chan *util.FileChunk, 4)
-
-			// Start writer goroutine for this file
-			var writerGroup errgroup.Group
-			writerGroup.Go(func() error {
-				defer writer.Close(ctx)
-				for chunk := range chunkChannel {
-					if len(chunk.Data) > 0 {
-						if _, err := writer.Write(ctx, chunk.Data); err != nil {
-							return errors.Trace(err)
-						}
-					}
-
-					if chunk.IsLast {
-						break
-					}
-				}
-
-				return nil
-			})
-
-			// Generate file in current goroutine, sending chunks to its writer
-			err = fg.GenerateOneFileStreaming(ctx, i, chunkChannel)
-			close(chunkChannel)
-
-			if err != nil {
-				cancel()
-			}
-
-			// Wait for writer to finish
-			if writerErr := writerGroup.Wait(); writerErr != nil {
-				return writerErr
-			}
-
-			if err != nil {
-				return err
-			}
-
-			fg.logger.UpdateFiles(1)
-			return nil
-		})
-	}
-
-	return errors.Trace(eg.Wait())
-}
-
-func NewFileGenerator(cfg *config.Config, sqlPath string) (FileGenerator, error) {
-	var (
-		gen FileGenerator
-		err error
-	)
-
-	switch strings.ToLower(cfg.Common.FileFormat) {
-	case "parquet":
-		gen, err = NewParquetGenerator(cfg, sqlPath)
-	case "csv":
-		gen, err = NewCSVGenerator(cfg, sqlPath)
-	default:
-		return nil, errors.Errorf("unsupported file format: %s", cfg.Common.FileFormat)
-	}
-	return gen, err
 }

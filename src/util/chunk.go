@@ -30,18 +30,24 @@ type FileChunk struct {
 	IsLast bool // Indicates if this is the final chunk for the file
 }
 
-// ChunkSizeCalculator for determining optimal chunk sizes
-type ChunkSizeCalculator struct {
+// ChunkCalculator interface for determining optimal chunk sizes
+type ChunkCalculator interface {
+	CalculateChunkSize(specs []*spec.ColumnSpec) int
+	EstimateRowSize(specs []*spec.ColumnSpec) int
+}
+
+// chunkCalculator for determining optimal chunk sizes
+type chunkCalculator struct {
 	cfg *config.Config
 }
 
 // NewChunkSizeCalculator creates a new chunk size calculator
-func NewChunkSizeCalculator(cfg *config.Config) *ChunkSizeCalculator {
-	return &ChunkSizeCalculator{cfg: cfg}
+func NewChunkSizeCalculator(cfg *config.Config) *chunkCalculator {
+	return &chunkCalculator{cfg: cfg}
 }
 
 // EstimateRowSize calculates the approximate size of a single row in bytes
-func (c *ChunkSizeCalculator) EstimateRowSize(specs []*spec.ColumnSpec) int {
+func (c *chunkCalculator) EstimateRowSize(specs []*spec.ColumnSpec) int {
 	totalSize := 0
 
 	for _, columnSpec := range specs {
@@ -86,7 +92,7 @@ func (c *ChunkSizeCalculator) EstimateRowSize(specs []*spec.ColumnSpec) int {
 }
 
 // CalculateChunkSize determines the optimal number of rows per chunk
-func (c *ChunkSizeCalculator) CalculateChunkSize(specs []*spec.ColumnSpec) int {
+func (c *chunkCalculator) CalculateChunkSize(specs []*spec.ColumnSpec) int {
 	rowSize := c.EstimateRowSize(specs)
 	if rowSize <= 0 {
 		rowSize = 100 // Fallback

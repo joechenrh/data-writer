@@ -261,48 +261,46 @@ func (pw *ParquetWriter) Write(startRowID int) error {
 	return nil
 }
 
-// ParquetGenerator implements FileGenerator interface for Parquet files
+// ParquetGenerator implements FormatGenerator for Parquet files.
 type ParquetGenerator struct {
-	*fileGenerator
+	cfg   *config.Config
+	specs []*spec.ColumnSpec
 }
 
-// NewParquetGenerator creates a new Parquet generator
-func NewParquetGenerator(
-	cfg *config.Config, sqlPath string,
-) (*fileGenerator, error) {
-	gen, err := newFileGenerator(cfg, sqlPath)
-	if err != nil {
-		return nil, err
-	}
-
-	parquetGen := &ParquetGenerator{
-		fileGenerator: gen,
-	}
-	gen.fileSuffix = "parquet"
-	gen.SpecificGenerator = parquetGen
-	return gen, nil
+func newParquetGenerator(
+	cfg *config.Config,
+	specs []*spec.ColumnSpec,
+) (*ParquetGenerator, error) {
+	return &ParquetGenerator{
+		cfg:   cfg,
+		specs: specs,
+	}, nil
 }
 
-func (g *ParquetGenerator) GenerateOneFile(
+func (g *ParquetGenerator) FileSuffix() string {
+	return "parquet"
+}
+
+func (g *ParquetGenerator) GenerateFile(
 	ctx context.Context,
 	writer storage.ExternalFileWriter,
 	fileNo int,
 ) error {
 	wrapper := &writeWrapper{Writer: writer}
-	return generateParquetCommon(wrapper, fileNo, g.specs, g.Config)
+	return generateParquetCommon(wrapper, fileNo, g.specs, g.cfg)
 }
 
-func (g *ParquetGenerator) GenerateOneFileStreaming(
+func (g *ParquetGenerator) GenerateFileStreaming(
 	ctx context.Context,
 	fileNo int,
 	chunkChannel chan<- *util.FileChunk,
 ) error {
-	// Create a buffer to capture parquet data
+	// Create a buffer to capture parquet data.
 	buffer := &bytes.Buffer{}
 
 	targetChunkSize := 8 << 20 // Default 8MB
-	if g.Config.Common.ChunkSizeKB > 0 {
-		targetChunkSize = g.Config.Common.ChunkSizeKB * 1024
+	if g.cfg.Common.ChunkSizeKB > 0 {
+		targetChunkSize = g.cfg.Common.ChunkSizeKB * 1024
 	}
 
 	wrapper := &writeWrapper{Writer: &streamingParquetWriter{
@@ -311,7 +309,7 @@ func (g *ParquetGenerator) GenerateOneFileStreaming(
 		chunkSize:    targetChunkSize,
 		ctx:          ctx,
 	}}
-	return generateParquetCommon(wrapper, fileNo, g.specs, g.Config)
+	return generateParquetCommon(wrapper, fileNo, g.specs, g.cfg)
 }
 
 // Common parquet generation function that works with any writer

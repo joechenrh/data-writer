@@ -64,15 +64,13 @@ func ShowFiles(cfg *config.Config) error {
 }
 
 func GenerateFiles(cfg *config.Config, sqlPath string, threads int) error {
-	gen, err := generator.NewFileGenerator(cfg, sqlPath)
+	gen, err := generator.NewOrchestrator(cfg, sqlPath)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	defer gen.Close()
 
-	if cfg.Common.UseStreamingMode {
-		return gen.GenerateStreaming(threads)
-	}
-	return gen.Generate(threads)
+	return gen.Run(cfg.Common.UseStreamingMode, threads)
 }
 
 // UploadLocalFiles uploads all files from a local directory to the configured remote path
