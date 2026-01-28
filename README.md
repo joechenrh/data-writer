@@ -27,6 +27,54 @@ This operation will upload all files from the specified local directory to the p
 ./bin/parquet-writer -op delete -cfg config.toml
 ```
 
+## Configuration
+
+Configuration is a TOML file passed via `-cfg`. See `config/sample.toml` for a template.
+
+Example:
+```toml
+[common]
+path = "/tmp/data-writer"
+prefix = "test.t1"
+start_fileno = 0
+end_fileno = 10
+rows = 60000
+format = "csv"          # csv or parquet (case-insensitive)
+folders = 0             # <=1 means no subfolders
+use_streaming_mode = true
+chunk_size_kb = 64       # streaming only
+
+[parquet]
+row_groups = 1
+page_size_kb = 1024
+compression = "zstd"
+
+[csv]
+base64 = false
+separator = ","
+endline = "\n"
+
+# Optional storage credentials (used when path is s3:// or gcs://)
+[s3]
+region = "us-east-1"
+access_key = "AKIA..."
+secret_key = "SECRET..."
+provider = "aws"
+endpoint = "https://s3.amazonaws.com"
+force = false
+role_arn = ""
+
+[gcs]
+credential = "/path/to/service-account.json"
+```
+
+Notes:
+- `common.path` points to the target storage location (local path or `s3://`/`gcs://`).
+- `common.start_fileno` and `common.end_fileno` define a half-open range `[start, end)`.
+- `common.folders` splits output into `part%05d/` subfolders when > 1.
+- `common.chunk_size_kb` affects streaming: CSV uses it as a target chunk size; Parquet uses it as the raw chunk size (default 8 MiB).
+- `parquet.compression` supports `snappy`, `zstd`, `gzip`, `brotli`, `lz4`, and `none`.
+
 ## Speed
 
 Test with the following schema with 16 threads:

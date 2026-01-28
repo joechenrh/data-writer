@@ -32,6 +32,9 @@ page_size_kb = 1024
 
 [csv]
 base64 = true
+separator = ","
+endline = "\n"
+# separator = "\t"
 
 # [s3]
 # region = "11"
