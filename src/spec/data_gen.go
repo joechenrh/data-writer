@@ -36,6 +36,21 @@ func generateStringWithCompress(b []byte, length int, compress int, rng *rand.Ra
 	}
 }
 
+func (c *ColumnSpec) generateNULL(rng *rand.Rand) bool {
+	return rng.Intn(100) < c.NullPercent
+}
+
+func (c *ColumnSpec) generateBatchNull(length int, rng *rand.Rand) []bool {
+	randomIndices := make([]byte, length)
+	rng.Read(randomIndices)
+
+	null := make([]bool, length)
+	for i := range length {
+		null[i] = int(randomIndices[i])*100 < c.NullPercent*256
+	}
+	return null
+}
+
 func (c *ColumnSpec) generatePartialOrderInt(rowID int) int {
 	randPrefix := (rowID * 1000000007) & 31
 	moveBit := c.TypeLen - 6
@@ -101,21 +116,6 @@ func (c *ColumnSpec) generateInt(rowID int, rng *rand.Rand) int {
 		log.Printf("Unsupported order: %d", c.Order)
 	}
 	return rowID
-}
-
-func (c *ColumnSpec) generateNULL(rng *rand.Rand) bool {
-	return rng.Intn(100) < c.NullPercent
-}
-
-func (c *ColumnSpec) generateBatchNull(length int, rng *rand.Rand) []bool {
-	randomIndices := make([]byte, length)
-	rng.Read(randomIndices)
-
-	null := make([]bool, length)
-	for i := range length {
-		null[i] = int(randomIndices[i])*100 < c.NullPercent*256
-	}
-	return null
 }
 
 func (c *ColumnSpec) generateString(rng *rand.Rand) string {
@@ -191,26 +191,26 @@ func (c *ColumnSpec) generateInt64Parquet(rowID int, out []int64, defLevel []int
 }
 
 func (c *ColumnSpec) generateDecimalInt32Parquet(_ int, out []int32, defLevel []int16, rng *rand.Rand) {
-	unscaled := c.generateDecimalInt64Batch(len(out), rng)
+	nullMap := c.generateBatchNull(len(out), rng)
 	for i := range len(out) {
-		if unscaled[i] < 0 {
+		if nullMap[i] {
 			defLevel[i] = 0
-			continue
+		} else {
+			defLevel[i] = 1
+			out[i] = int32(c.generateRandomInt(rng))
 		}
-		defLevel[i] = 1
-		out[i] = int32(unscaled[i])
 	}
 }
 
 func (c *ColumnSpec) generateDecimalInt64Parquet(_ int, out []int64, defLevel []int16, rng *rand.Rand) {
-	unscaled := c.generateDecimalInt64Batch(len(out), rng)
+	nullMap := c.generateBatchNull(len(out), rng)
 	for i := range len(out) {
-		if unscaled[i] < 0 {
+		if nullMap[i] {
 			defLevel[i] = 0
-			continue
+		} else {
+			defLevel[i] = 1
+			out[i] = int64(c.generateRandomInt(rng))
 		}
-		defLevel[i] = 1
-		out[i] = unscaled[i]
 	}
 }
 
@@ -228,40 +228,6 @@ func (c *ColumnSpec) generateDecimalFixedLenParquet(_ int, out []parquet.FixedLe
 			out[i] = generateDecimalBytes(c.TypeLen, rng)
 		}
 	}
-}
-
-func (c *ColumnSpec) generateDecimalInt64Batch(batch int, rng *rand.Rand) []int64 {
-	nullMap := c.generateBatchNull(batch, rng)
-	out := make([]int64, batch)
-
-	if len(c.IntSet) > 0 {
-		for i := range batch {
-			if nullMap[i] {
-				out[i] = -1
-				continue
-			}
-			out[i] = c.IntSet[rng.Intn(len(c.IntSet))]
-		}
-		return out
-	}
-
-	limit := pow10Int64(c.Precision)
-	for i := range batch {
-		if nullMap[i] {
-			out[i] = -1
-			continue
-		}
-		out[i] = rng.Int63n(limit)
-	}
-	return out
-}
-
-func pow10Int64(p int) int64 {
-	res := int64(1)
-	for range p {
-		res *= 10
-	}
-	return res
 }
 
 func fixedLenDecimalFromInt64(unscaled int64, byteLen int) parquet.FixedLenByteArray {
