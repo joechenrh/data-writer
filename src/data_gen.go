@@ -6,12 +6,21 @@ import (
 	"math"
 	"math/big"
 	"math/rand"
+	"strconv"
 	"time"
 
 	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/pkg/util/hack"
 )
+
+var fillA = func() []byte {
+	buf := make([]byte, 1024)
+	for i := range buf {
+		buf[i] = 'a'
+	}
+	return buf
+}()
 
 func generateStringWithCompress(b []byte, length int, compress int, rng *rand.Rand) {
 	nonduplicateLength := length * compress / 100
@@ -21,8 +30,8 @@ func generateStringWithCompress(b []byte, length int, compress int, rng *rand.Ra
 	}
 
 	// The rest part is filled with duplicate 'a' to simulate compression
-	for i := nonduplicateLength; i < length; i++ {
-		b[i] = 'a'
+	for i := nonduplicateLength; i < length; {
+		i += copy(b[i:], fillA)
 	}
 }
 
@@ -134,12 +143,12 @@ func (c *ColumnSpec) generateJSON(_ *rand.Rand) string {
 	return "[1,2,3,4,5]"
 }
 
-func (c *ColumnSpec) generateRandomTime(format string) string {
+func (c *ColumnSpec) generateRandomTime(format string, rng *rand.Rand) string {
 	now := time.Now()
 
 	oneYearAgo := now.AddDate(-1, 0, 0)
 
-	randomDuration := time.Duration(rand.Int63n(int64(now.Sub(oneYearAgo))))
+	randomDuration := time.Duration(rng.Int63n(int64(now.Sub(oneYearAgo))))
 
 	randomTime := oneYearAgo.Add(randomDuration)
 
@@ -161,11 +170,11 @@ func (c *ColumnSpec) generate(rowID int, rng *rand.Rand) (any, int16) {
 	case "json":
 		return c.generateJSON(rng), 1
 	case "timestamp", "datetime":
-		return c.generateRandomTime(time.DateTime), 1
+		return c.generateRandomTime(time.DateTime, rng), 1
 	case "date":
-		return c.generateRandomTime(time.DateOnly), 1
+		return c.generateRandomTime(time.DateOnly, rng), 1
 	case "time":
-		return c.generateRandomTime(time.TimeOnly), 1
+		return c.generateRandomTime(time.TimeOnly, rng), 1
 	case "year":
 		return rng.Intn(70) + 1970, 1
 	}
@@ -417,5 +426,20 @@ func (c *ColumnSpec) generateStringParquet(_ int, out []parquet.ByteArray, defLe
 
 func generateSingleField(rowID int, spec *ColumnSpec, rng *rand.Rand) string {
 	v, _ := spec.generate(rowID, rng)
-	return fmt.Sprintf("%v", v)
+	switch val := v.(type) {
+	case string:
+		return val
+	case int:
+		return strconv.FormatInt(int64(val), 10)
+	case int64:
+		return strconv.FormatInt(val, 10)
+	case int32:
+		return strconv.FormatInt(int64(val), 10)
+	case float64:
+		return strconv.FormatFloat(val, 'g', -1, 64)
+	case float32:
+		return strconv.FormatFloat(float64(val), 'g', -1, 32)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
 }

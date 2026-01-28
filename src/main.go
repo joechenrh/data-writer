@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"log"
+	"os"
+	"runtime/pprof"
 	"strings"
 	"sync/atomic"
 
@@ -12,15 +14,17 @@ import (
 )
 
 var (
-	operation = flag.String("op", "create", "create/delete/show/upload, default is create")
-	sqlPath   = flag.String("sql", "", "sql path")
-	cfgPath   = flag.String("cfg", "", "config path")
-	threads   = flag.Int("threads", 16, "threads")
-	localDir  = flag.String("dir", "", "local directory for upload operation")
+	operation  = flag.String("op", "create", "create/delete/show/upload, default is create")
+	sqlPath    = flag.String("sql", "", "sql path")
+	cfgPath    = flag.String("cfg", "", "config path")
+	threads    = flag.Int("threads", 16, "threads")
+	localDir   = flag.String("dir", "", "local directory for upload operation")
+	cpuProfile = flag.String("cpuprofile", "", "write cpu profile to file (or use CPUPROFILE env var)")
 )
 
 var (
 	writtenFiles       atomic.Int32
+	writtenBytes       atomic.Int64
 	suffix             string
 	streamingGenerator func(context.Context, int, []*ColumnSpec, Config, chan<- *FileChunk) error
 	generator          DataGenerator
@@ -28,6 +32,27 @@ var (
 
 func main() {
 	flag.Parse()
+
+	profilePath := *cpuProfile
+	if profilePath == "" {
+		profilePath = os.Getenv("CPUPROFILE")
+	}
+	if profilePath != "" {
+		f, err := os.Create(profilePath)
+		if err != nil {
+			log.Fatalf("Failed to create cpu profile file: %v", err)
+		}
+		if err := pprof.StartCPUProfile(f); err != nil {
+			log.Fatalf("Failed to start cpu profile: %v", err)
+		}
+		defer func() {
+			pprof.StopCPUProfile()
+			if err := f.Close(); err != nil {
+				log.Printf("Failed to close cpu profile file: %v", err)
+			}
+		}()
+		log.Printf("CPU profiling enabled: %s", profilePath)
+	}
 
 	var config Config
 	toml.DecodeFile(*cfgPath, &config)

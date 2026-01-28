@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/schollz/progressbar/v3"
@@ -84,22 +85,81 @@ func ShowFiles(cfg Config) error {
 	return nil
 }
 
-func showProcess(totalFiles int) {
+type countingWriter struct {
+	writer storage.ExternalFileWriter
+	bytes  *atomic.Int64
+}
+
+func (cw *countingWriter) Write(ctx context.Context, p []byte) (int, error) {
+	n, err := cw.writer.Write(ctx, p)
+	if n > 0 {
+		cw.bytes.Add(int64(n))
+	}
+	return n, err
+}
+
+func (cw *countingWriter) Close(ctx context.Context) error {
+	return cw.writer.Close(ctx)
+}
+
+func startProgressLogger(
+	totalFiles int,
+	action string,
+	files *atomic.Int32,
+	bytes *atomic.Int64,
+	interval time.Duration,
+) {
+	if totalFiles <= 0 {
+		return
+	}
+
 	go func() {
-		bar := progressbar.Default(int64(totalFiles))
-		ticker := time.NewTicker(5 * time.Second)
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
-		var prev int
+		prevFiles := int64(files.Load())
+		prevBytes := bytes.Load()
+		prevTime := time.Now()
+
 		for range ticker.C {
-			cur := int(writtenFiles.Load())
-			bar.Add(cur - prev)
-			prev = cur
-			if cur >= totalFiles {
+			curFiles := int64(files.Load())
+			curBytes := bytes.Load()
+			now := time.Now()
+			elapsed := now.Sub(prevTime).Seconds()
+
+			filesPerSec := progressRate(curFiles-prevFiles, elapsed)
+			bytesPerSec := progressRate(curBytes-prevBytes, elapsed)
+
+			log.Printf(
+				"Progress: %s files %d (%.2f files/s), %s size %s (%.2f MiB/s)",
+				action,
+				curFiles,
+				filesPerSec,
+				action,
+				units.BytesSize(float64(curBytes)),
+				bytesPerSec/float64(units.MiB),
+			)
+
+			prevFiles = curFiles
+			prevBytes = curBytes
+			prevTime = now
+
+			if int(curFiles) >= totalFiles {
 				break
 			}
 		}
 	}()
+}
+
+func progressRate(delta int64, elapsedSeconds float64) float64 {
+	if elapsedSeconds <= 0 {
+		return 0
+	}
+	return float64(delta) / elapsedSeconds
+}
+
+func showProcess(totalFiles int) {
+	startProgressLogger(totalFiles, "written", &writtenFiles, &writtenBytes, 5*time.Second)
 }
 
 func GenerateFiles(cfg Config) error {
@@ -146,13 +206,16 @@ func generateFilesDirect(cfg Config) error {
 				fileName = fmt.Sprintf("part%d/%s.%d.%s", fileNo%cfg.Common.Folders, cfg.Common.Prefix, fileNo, suffix)
 			}
 
-			writer, err := store.Create(ctx, fileName, nil)
+			writer, err := store.Create(ctx, fileName, &storage.WriterOption{
+				Concurrency: 8,
+			})
 			if err != nil {
 				return errors.Trace(err)
 			}
 
-			defer writer.Close(ctx)
-			if err = generator.GenerateFile(ctx, writer, fileNo, specs, cfg); err != nil {
+			writerWithCount := &countingWriter{writer: writer, bytes: &writtenBytes}
+			defer writerWithCount.Close(ctx)
+			if err = generator.GenerateFile(ctx, writerWithCount, fileNo, specs, cfg); err != nil {
 				return errors.Trace(err)
 			}
 			writtenFiles.Add(1)
@@ -201,7 +264,7 @@ func generateFilesStreaming(cfg Config) error {
 	// Create streaming coordinator and let it handle all concurrency
 	coordinator := NewStreamingCoordinator(store, chunkCalculator)
 
-	return coordinator.CoordinateStreaming(ctx, startNo, endNo, specs, cfg, &writtenFiles, *threads)
+	return coordinator.CoordinateStreaming(ctx, startNo, endNo, specs, cfg, &writtenFiles, &writtenBytes, *threads)
 }
 
 // UploadLocalFiles uploads all files from a local directory to the configured remote path
@@ -288,7 +351,9 @@ func UploadLocalFiles(cfg Config, localDir string) error {
 			}
 
 			// Create remote file writer
-			writer, err := store.Create(ctx, remotePath, nil)
+			writer, err := store.Create(ctx, remotePath, &storage.WriterOption{
+				Concurrency: 8,
+			})
 			if err != nil {
 				return errors.Annotatef(err, "failed to create remote file: %s", remotePath)
 			}

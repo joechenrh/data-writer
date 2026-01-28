@@ -45,7 +45,7 @@ func (c *ChunkSizeCalculator) EstimateRowSize(specs []*ColumnSpec) int {
 			totalSize += 4 // 4 bytes
 		case "double":
 			totalSize += 8 // 8 bytes
-		case "varchar", "char", "blob":
+		case "varchar", "char", "blob", "tinyblob", "mediumblob", "longblob", "binary", "varbinary", "text", "tinytext", "mediumtext", "longtext":
 			// Estimate based on TypeLen, with some overhead for variable length
 			if spec.TypeLen > 0 {
 				totalSize += spec.TypeLen
@@ -97,8 +97,15 @@ func NewStreamingCoordinator(store storage.ExternalStorage, chunkCalculator Chun
 }
 
 // fileWriter handles writing for a single file from its dedicated channel
-func (sc *StreamingCoordinator) fileWriter(ctx context.Context, fileName string, chunkChannel <-chan *FileChunk) error {
-	writer, err := sc.store.Create(ctx, fileName, nil)
+func (sc *StreamingCoordinator) fileWriter(
+	ctx context.Context,
+	fileName string,
+	chunkChannel <-chan *FileChunk,
+	writtenBytes *atomic.Int64,
+) error {
+	writer, err := sc.store.Create(ctx, fileName, &storage.WriterOption{
+		Concurrency: 8,
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -106,9 +113,12 @@ func (sc *StreamingCoordinator) fileWriter(ctx context.Context, fileName string,
 
 	for chunk := range chunkChannel {
 		if len(chunk.Data) > 0 {
-			_, err := writer.Write(ctx, chunk.Data)
+			n, err := writer.Write(ctx, chunk.Data)
 			if err != nil {
 				return errors.Trace(err)
+			}
+			if n > 0 {
+				writtenBytes.Add(int64(n))
 			}
 		}
 
@@ -124,7 +134,7 @@ func (sc *StreamingCoordinator) fileWriter(ctx context.Context, fileName string,
 func (sc *StreamingCoordinator) CoordinateStreaming(
 	ctx context.Context, startNo, endNo int,
 	specs []*ColumnSpec, cfg Config,
-	writtenFiles *atomic.Int32, threads int,
+	writtenFiles *atomic.Int32, writtenBytes *atomic.Int64, threads int,
 ) error {
 	// Create a cancellable context for all operations
 	ctx, cancel := context.WithCancel(ctx)
@@ -147,7 +157,7 @@ func (sc *StreamingCoordinator) CoordinateStreaming(
 			// Start writer goroutine for this file
 			var writerGroup errgroup.Group
 			writerGroup.Go(func() error {
-				err := sc.fileWriter(ctx, fileName, chunkChannel)
+				err := sc.fileWriter(ctx, fileName, chunkChannel, writtenBytes)
 				if err != nil {
 					// Cancel context on writer error to stop generation
 					cancel()
