@@ -66,14 +66,14 @@ func ShowFiles(cfg config.Config) error {
 }
 
 type countingWriter struct {
-	writer storage.ExternalFileWriter
-	bytes  *atomic.Int64
+	writer   storage.ExternalFileWriter
+	progress *util.ProgressLogger
 }
 
 func (cw *countingWriter) Write(ctx context.Context, p []byte) (int, error) {
 	n, err := cw.writer.Write(ctx, p)
-	if n > 0 {
-		cw.bytes.Add(int64(n))
+	if n > 0 && cw.progress != nil {
+		cw.progress.UpdateBytes(int64(n))
 	}
 	return n, err
 }
@@ -82,8 +82,8 @@ func (cw *countingWriter) Close(ctx context.Context) error {
 	return cw.writer.Close(ctx)
 }
 
-func showProcess(totalFiles int) {
-	util.StartProgressLogger(totalFiles, "written", &writtenFiles, &writtenBytes, 5*time.Second)
+func showProcess(totalFiles int) *util.ProgressLogger {
+	return util.NewProgressLogger(totalFiles, "written", 5*time.Second)
 }
 
 func GenerateFiles(cfg config.Config) error {
@@ -120,7 +120,7 @@ func generateFilesDirect(cfg config.Config) error {
 	eg.SetLimit(*threads)
 
 	startNo, endNo := cfg.Common.StartFileNo, cfg.Common.EndFileNo
-	showProcess(endNo - startNo)
+	progress := showProcess(endNo - startNo)
 
 	for i := startNo; i < endNo; i++ {
 		fileNo := i
@@ -137,12 +137,12 @@ func generateFilesDirect(cfg config.Config) error {
 				return errors.Trace(err)
 			}
 
-			writerWithCount := &countingWriter{writer: writer, bytes: &writtenBytes}
+			writerWithCount := &countingWriter{writer: writer, progress: progress}
 			defer writerWithCount.Close(ctx)
 			if err = generator.GenerateFile(ctx, writerWithCount, fileNo, specs, cfg); err != nil {
 				return errors.Trace(err)
 			}
-			writtenFiles.Add(1)
+			progress.UpdateFiles(1)
 			return nil
 		})
 	}
@@ -175,7 +175,7 @@ func generateFilesStreaming(cfg config.Config) error {
 
 	startNo, endNo := cfg.Common.StartFileNo, cfg.Common.EndFileNo
 	totalFiles := endNo - startNo
-	showProcess(totalFiles)
+	progress := showProcess(totalFiles)
 
 	// Initialize chunk calculator with configurable size
 	chunkCalculator := writer.NewChunkSizeCalculator(&cfg)
@@ -196,8 +196,7 @@ func generateFilesStreaming(cfg config.Config) error {
 		cfg,
 		generator,
 		suffix,
-		&writtenFiles,
-		&writtenBytes,
+		progress,
 		*threads,
 	)
 }

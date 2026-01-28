@@ -8,29 +8,58 @@ import (
 	"github.com/docker/go-units"
 )
 
-// StartProgressLogger periodically logs file and byte progress.
-func StartProgressLogger(
-	totalFiles int,
-	action string,
-	files *atomic.Int32,
-	bytes *atomic.Int64,
-	interval time.Duration,
-) {
-	if totalFiles <= 0 {
+// ProgressLogger tracks and logs progress for file and byte counts.
+type ProgressLogger struct {
+	totalFiles int
+	action     string
+	interval   time.Duration
+	files      atomic.Int32
+	bytes      atomic.Int64
+}
+
+// NewProgressLogger creates and starts a progress logger.
+func NewProgressLogger(totalFiles int, action string, interval time.Duration) *ProgressLogger {
+	logger := &ProgressLogger{
+		totalFiles: totalFiles,
+		action:     action,
+		interval:   interval,
+	}
+	logger.start()
+	return logger
+}
+
+// UpdateBytes increments the byte counter.
+func (p *ProgressLogger) UpdateBytes(delta int64) {
+	if delta == 0 {
+		return
+	}
+	p.bytes.Add(delta)
+}
+
+// UpdateFiles increments the file counter.
+func (p *ProgressLogger) UpdateFiles(delta int32) {
+	if delta == 0 {
+		return
+	}
+	p.files.Add(delta)
+}
+
+func (p *ProgressLogger) start() {
+	if p.totalFiles <= 0 {
 		return
 	}
 
 	go func() {
-		ticker := time.NewTicker(interval)
+		ticker := time.NewTicker(p.interval)
 		defer ticker.Stop()
 
-		prevFiles := int64(files.Load())
-		prevBytes := bytes.Load()
+		prevFiles := int64(p.files.Load())
+		prevBytes := p.bytes.Load()
 		prevTime := time.Now()
 
 		for range ticker.C {
-			curFiles := int64(files.Load())
-			curBytes := bytes.Load()
+			curFiles := int64(p.files.Load())
+			curBytes := p.bytes.Load()
 			now := time.Now()
 			elapsed := now.Sub(prevTime).Seconds()
 
@@ -39,10 +68,10 @@ func StartProgressLogger(
 
 			log.Printf(
 				"Progress: %s files %d (%.2f files/s), %s size %s (%.2f MiB/s)",
-				action,
+				p.action,
 				curFiles,
 				filesPerSec,
-				action,
+				p.action,
 				units.BytesSize(float64(curBytes)),
 				bytesPerSec/float64(units.MiB),
 			)
@@ -51,7 +80,7 @@ func StartProgressLogger(
 			prevBytes = curBytes
 			prevTime = now
 
-			if int(curFiles) >= totalFiles {
+			if int(curFiles) >= p.totalFiles {
 				break
 			}
 		}

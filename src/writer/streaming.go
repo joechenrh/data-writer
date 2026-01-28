@@ -3,10 +3,10 @@ package writer
 import (
 	"context"
 	"fmt"
-	"sync/atomic"
 
 	"dataWriter/src/config"
 	"dataWriter/src/spec"
+	"dataWriter/src/util"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -104,7 +104,7 @@ func (sc *StreamingCoordinator) fileWriter(
 	ctx context.Context,
 	fileName string,
 	chunkChannel <-chan *FileChunk,
-	writtenBytes *atomic.Int64,
+	progress *util.ProgressLogger,
 ) error {
 	writer, err := sc.store.Create(ctx, fileName, &storage.WriterOption{
 		Concurrency: 8,
@@ -120,8 +120,8 @@ func (sc *StreamingCoordinator) fileWriter(
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if n > 0 {
-				writtenBytes.Add(int64(n))
+			if n > 0 && progress != nil {
+				progress.UpdateBytes(int64(n))
 			}
 		}
 
@@ -140,8 +140,7 @@ func (sc *StreamingCoordinator) CoordinateStreaming(
 	cfg config.Config,
 	generator DataGenerator,
 	suffix string,
-	writtenFiles *atomic.Int32,
-	writtenBytes *atomic.Int64,
+	progress *util.ProgressLogger,
 	threads int,
 ) error {
 	// Create a cancellable context for all operations
@@ -165,7 +164,7 @@ func (sc *StreamingCoordinator) CoordinateStreaming(
 			// Start writer goroutine for this file
 			var writerGroup errgroup.Group
 			writerGroup.Go(func() error {
-				err := sc.fileWriter(ctx, fileName, chunkChannel, writtenBytes)
+				err := sc.fileWriter(ctx, fileName, chunkChannel, progress)
 				if err != nil {
 					// Cancel context on writer error to stop generation
 					cancel()
@@ -190,7 +189,9 @@ func (sc *StreamingCoordinator) CoordinateStreaming(
 				return err
 			}
 
-			writtenFiles.Add(1)
+			if progress != nil {
+				progress.UpdateFiles(1)
+			}
 			return nil
 		})
 	}

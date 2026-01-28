@@ -6,7 +6,6 @@ import (
 	"os"
 	"runtime/pprof"
 	"strings"
-	"sync/atomic"
 
 	"dataWriter/src/config"
 	"dataWriter/src/writer"
@@ -24,10 +23,8 @@ var (
 )
 
 var (
-	writtenFiles atomic.Int32
-	writtenBytes atomic.Int64
-	suffix       string
-	generator    writer.DataGenerator
+	suffix    string
+	generator writer.DataGenerator
 )
 
 func main() {
