@@ -1,14 +1,15 @@
 package main
 
 import (
-	"context"
+	"flag"
 	"log"
 	"os"
 	"runtime/pprof"
 	"strings"
 	"sync/atomic"
 
-	"flag"
+	"dataWriter/src/config"
+	"dataWriter/src/writer"
 
 	"github.com/BurntSushi/toml"
 )
@@ -23,11 +24,10 @@ var (
 )
 
 var (
-	writtenFiles       atomic.Int32
-	writtenBytes       atomic.Int64
-	suffix             string
-	streamingGenerator func(context.Context, int, []*ColumnSpec, Config, chan<- *FileChunk) error
-	generator          DataGenerator
+	writtenFiles atomic.Int32
+	writtenBytes atomic.Int64
+	suffix       string
+	generator    writer.DataGenerator
 )
 
 func main() {
@@ -54,42 +54,40 @@ func main() {
 		log.Printf("CPU profiling enabled: %s", profilePath)
 	}
 
-	var config Config
-	toml.DecodeFile(*cfgPath, &config)
+	var cfg config.Config
+	toml.DecodeFile(*cfgPath, &cfg)
 
-	chunkCalculator := NewChunkSizeCalculator(&config)
+	chunkCalculator := writer.NewChunkSizeCalculator(&cfg)
 
-	switch strings.ToLower(config.Common.FileFormat) {
+	switch strings.ToLower(cfg.Common.FileFormat) {
 	case "parquet":
 		suffix = "parquet"
-		generator = NewParquetGenerator()
-		streamingGenerator = generator.GenerateFileStreaming
+		generator = writer.NewParquetGenerator()
 	case "csv":
 		suffix = "csv"
-		generator = NewCSVGenerator(chunkCalculator)
-		streamingGenerator = generator.GenerateFileStreaming
+		generator = writer.NewCSVGenerator(chunkCalculator)
 	default:
-		log.Fatalf("Unsupported file format: %s", config.Common.FileFormat)
+		log.Fatalf("Unsupported file format: %s", cfg.Common.FileFormat)
 	}
 
 	switch strings.ToLower(*operation) {
 	case "delete":
-		if err := DeleteAllFiles(config); err != nil {
+		if err := DeleteAllFiles(cfg); err != nil {
 			log.Fatalf("Failed to delete files: %v", err)
 		}
 	case "show":
-		if err := ShowFiles(config); err != nil {
+		if err := ShowFiles(cfg); err != nil {
 			log.Fatalf("Failed to show files: %v", err)
 		}
 	case "create":
-		if err := GenerateFiles(config); err != nil {
+		if err := GenerateFiles(cfg); err != nil {
 			log.Fatalf("Failed to generate files: %v", err)
 		}
 	case "upload":
 		if *localDir == "" {
 			log.Fatalf("Local directory (-dir) must be specified for upload operation")
 		}
-		if err := UploadLocalFiles(config, *localDir); err != nil {
+		if err := UploadLocalFiles(cfg, *localDir); err != nil {
 			log.Fatalf("Failed to upload files: %v", err)
 		}
 	default:

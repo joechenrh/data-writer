@@ -1,9 +1,12 @@
-package main
+package writer
 
 import (
 	"context"
 	"fmt"
 	"sync/atomic"
+
+	"dataWriter/src/config"
+	"dataWriter/src/spec"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -19,20 +22,20 @@ type FileChunk struct {
 
 // ChunkSizeCalculator for determining optimal chunk sizes
 type ChunkSizeCalculator struct {
-	cfg *Config
+	cfg *config.Config
 }
 
 // NewChunkSizeCalculator creates a new chunk size calculator
-func NewChunkSizeCalculator(cfg *Config) *ChunkSizeCalculator {
+func NewChunkSizeCalculator(cfg *config.Config) *ChunkSizeCalculator {
 	return &ChunkSizeCalculator{cfg: cfg}
 }
 
 // EstimateRowSize calculates the approximate size of a single row in bytes
-func (c *ChunkSizeCalculator) EstimateRowSize(specs []*ColumnSpec) int {
+func (c *ChunkSizeCalculator) EstimateRowSize(specs []*spec.ColumnSpec) int {
 	totalSize := 0
 
-	for _, spec := range specs {
-		switch spec.SQLType {
+	for _, columnSpec := range specs {
+		switch columnSpec.SQLType {
 		case "bigint", "timestamp", "datetime":
 			totalSize += 8 // 8 bytes
 		case "int", "mediumint", "date":
@@ -47,8 +50,8 @@ func (c *ChunkSizeCalculator) EstimateRowSize(specs []*ColumnSpec) int {
 			totalSize += 8 // 8 bytes
 		case "varchar", "char", "blob", "tinyblob", "mediumblob", "longblob", "binary", "varbinary", "text", "tinytext", "mediumtext", "longtext":
 			// Estimate based on TypeLen, with some overhead for variable length
-			if spec.TypeLen > 0 {
-				totalSize += spec.TypeLen
+			if columnSpec.TypeLen > 0 {
+				totalSize += columnSpec.TypeLen
 			} else {
 				totalSize += 32 // Default estimate for variable length strings
 			}
@@ -68,7 +71,7 @@ func (c *ChunkSizeCalculator) EstimateRowSize(specs []*ColumnSpec) int {
 }
 
 // CalculateChunkSize determines the optimal number of rows per chunk
-func (c *ChunkSizeCalculator) CalculateChunkSize(specs []*ColumnSpec) int {
+func (c *ChunkSizeCalculator) CalculateChunkSize(specs []*spec.ColumnSpec) int {
 	rowSize := c.EstimateRowSize(specs)
 	if rowSize <= 0 {
 		rowSize = 100 // Fallback
@@ -133,8 +136,13 @@ func (sc *StreamingCoordinator) fileWriter(
 // CoordinateStreaming manages the complete streaming process with paired goroutines
 func (sc *StreamingCoordinator) CoordinateStreaming(
 	ctx context.Context, startNo, endNo int,
-	specs []*ColumnSpec, cfg Config,
-	writtenFiles *atomic.Int32, writtenBytes *atomic.Int64, threads int,
+	specs []*spec.ColumnSpec,
+	cfg config.Config,
+	generator DataGenerator,
+	suffix string,
+	writtenFiles *atomic.Int32,
+	writtenBytes *atomic.Int64,
+	threads int,
 ) error {
 	// Create a cancellable context for all operations
 	ctx, cancel := context.WithCancel(ctx)
@@ -166,7 +174,7 @@ func (sc *StreamingCoordinator) CoordinateStreaming(
 			})
 
 			// Generate file in current goroutine, sending chunks to its writer
-			err := streamingGenerator(ctx, fileNo, specs, cfg, chunkChannel)
+			err := generator.GenerateFileStreaming(ctx, fileNo, specs, cfg, chunkChannel)
 			close(chunkChannel)
 
 			if err != nil {

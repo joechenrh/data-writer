@@ -6,3 +6,8 @@ data-writer
 *_test.go
 *.test
 BENCHMARK_RESULTS.md
+generated_data/
+export*
+distributed*
+*.sql
+*.toml

@@ -1,4 +1,4 @@
-package main
+package writer
 
 import (
 	"bytes"
@@ -8,6 +8,9 @@ import (
 	"math/rand"
 	"strings"
 	"time"
+
+	"dataWriter/src/config"
+	"dataWriter/src/spec"
 
 	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/compress"
@@ -44,7 +47,7 @@ type ParquetWriter struct {
 	w         *file.Writer
 	defLevels [][]int16
 	valueBufs []any
-	specs     []*ColumnSpec
+	specs     []*spec.ColumnSpec
 
 	rng *rand.Rand
 
@@ -62,16 +65,16 @@ func (pw *ParquetWriter) getWriter(w io.Writer, dataPageSize int64, compression 
 		parquet.WithDataPageVersion(parquet.DataPageV2),
 		parquet.WithVersion(parquet.V2_LATEST),
 	}
-	for i, spec := range pw.specs {
-		colName := spec.OrigName
+	for i, columnSpec := range pw.specs {
+		colName := columnSpec.OrigName
 		fields[i], _ = schema.NewPrimitiveNodeConverted(
 			colName,
 			parquet.Repetitions.Optional,
-			spec.Type, spec.Converted,
-			spec.TypeLen, spec.Precision, spec.Scale,
+			columnSpec.Type, columnSpec.Converted,
+			columnSpec.TypeLen, columnSpec.Precision, columnSpec.Scale,
 			-1,
 		)
-		encoding, useDict := chooseParquetEncoding(spec)
+		encoding, useDict := chooseParquetEncoding(columnSpec)
 		opts = append(opts, parquet.WithDictionaryFor(colName, useDict))
 		if !useDict {
 			opts = append(opts, parquet.WithEncodingFor(colName, encoding))
@@ -87,15 +90,15 @@ func (pw *ParquetWriter) getWriter(w io.Writer, dataPageSize int64, compression 
 	return file.NewParquetWriter(w, node, file.WithWriterProps(parquet.NewWriterProperties(opts...))), nil
 }
 
-func chooseParquetEncoding(spec *ColumnSpec) (parquet.Encoding, bool) {
-	hasExplicitSet := len(spec.ValueSet) > 0 || len(spec.IntSet) > 0
-	if hasExplicitSet && !spec.IsUnique {
+func chooseParquetEncoding(columnSpec *spec.ColumnSpec) (parquet.Encoding, bool) {
+	hasExplicitSet := len(columnSpec.ValueSet) > 0 || len(columnSpec.IntSet) > 0
+	if hasExplicitSet && !columnSpec.IsUnique {
 		return parquet.Encodings.Plain, true
 	}
 
-	switch spec.Type {
+	switch columnSpec.Type {
 	case parquet.Types.Int32, parquet.Types.Int64:
-		if spec.Order == NumericTotalOrder || spec.Order == NumericPartialOrder {
+		if columnSpec.Order == spec.NumericTotalOrder || columnSpec.Order == spec.NumericPartialOrder {
 			return parquet.Encodings.DeltaBinaryPacked, false
 		}
 		return parquet.Encodings.Plain, false
@@ -104,7 +107,7 @@ func chooseParquetEncoding(spec *ColumnSpec) (parquet.Encoding, bool) {
 	case parquet.Types.FixedLenByteArray:
 		return parquet.Encodings.ByteStreamSplit, false
 	case parquet.Types.ByteArray:
-		if spec.IsUnique {
+		if columnSpec.IsUnique {
 			return parquet.Encodings.Plain, false
 		}
 		return parquet.Encodings.DeltaLengthByteArray, false
@@ -132,7 +135,7 @@ func getParquetCompressionCodec(name string) (compress.Compression, error) {
 	}
 }
 
-func (pw *ParquetWriter) Init(w io.Writer, rows, rowGroups int, dataPageSize int64, specs []*ColumnSpec, compression compress.Compression) error {
+func (pw *ParquetWriter) Init(w io.Writer, rows, rowGroups int, dataPageSize int64, specs []*spec.ColumnSpec, compression compress.Compression) error {
 	source := rand.NewSource(time.Now().UnixNano() + int64(rand.Intn(65536)))
 	pw.rng = rand.New(source)
 
@@ -189,7 +192,7 @@ func (pw *ParquetWriter) writeNextColumn(rgw file.SerialRowGroupWriter, rowIDSta
 	}
 	defer cw.Close()
 
-	spec := pw.specs[currCol]
+	columnSpec := pw.specs[currCol]
 	defLevels := pw.defLevels[currCol]
 	valueBuffer := pw.valueBufs[currCol]
 	rounds := pw.rowsPerRowGroup / len(defLevels)
@@ -200,79 +203,37 @@ func (pw *ParquetWriter) writeNextColumn(rgw file.SerialRowGroupWriter, rowIDSta
 	)
 
 	for range rounds {
-		switch spec.SQLType {
-		case "decimal":
-			switch spec.Type {
-			case parquet.Types.Int32:
-				buf := valueBuffer.([]int32)
-				spec.generateDecimalInt32Parquet(rowIDStart, buf, defLevels, pw.rng)
-				w, _ := cw.(*file.Int32ColumnChunkWriter)
-				num, err = w.WriteBatch(buf, defLevels, nil)
-			case parquet.Types.Int64:
-				buf := valueBuffer.([]int64)
-				spec.generateDecimalInt64Parquet(rowIDStart, buf, defLevels, pw.rng)
-				w, _ := cw.(*file.Int64ColumnChunkWriter)
-				num, err = w.WriteBatch(buf, defLevels, nil)
-			case parquet.Types.FixedLenByteArray:
-				buf := valueBuffer.([]parquet.FixedLenByteArray)
-				spec.generateDecimalFixedLenParquet(rowIDStart, buf, defLevels, pw.rng)
-				w, _ := cw.(*file.FixedLenByteArrayColumnChunkWriter)
-				num, err = w.WriteBatch(buf, defLevels, nil)
-			default:
-				return 0, errors.Errorf("unsupported decimal parquet type: %v", spec.Type)
-			}
-		case "bigint":
-			buf := valueBuffer.([]int64)
-			spec.generateInt64Parquet(rowIDStart, buf, defLevels, pw.rng)
-			w, _ := cw.(*file.Int64ColumnChunkWriter)
-			num, err = w.WriteBatch(buf, defLevels, nil)
-		case "int", "mediumint", "smallint", "tinyint":
+		if err = columnSpec.FillParquetBatch(rowIDStart, valueBuffer, defLevels, pw.rng); err != nil {
+			return written, err
+		}
+
+		switch columnSpec.Type {
+		case parquet.Types.Int32:
 			buf := valueBuffer.([]int32)
-			spec.generateInt32Parquet(rowIDStart, buf, defLevels, pw.rng)
 			w, _ := cw.(*file.Int32ColumnChunkWriter)
 			num, err = w.WriteBatch(buf, defLevels, nil)
-		case "float":
-			buf := valueBuffer.([]float32)
-			spec.generateFloat32Parquet(rowIDStart, buf, defLevels, pw.rng)
-			w, _ := cw.(*file.Float32ColumnChunkWriter)
+		case parquet.Types.Int64:
+			buf := valueBuffer.([]int64)
+			w, _ := cw.(*file.Int64ColumnChunkWriter)
 			num, err = w.WriteBatch(buf, defLevels, nil)
-		case "double":
+		case parquet.Types.FixedLenByteArray:
+			buf := valueBuffer.([]parquet.FixedLenByteArray)
+			w, _ := cw.(*file.FixedLenByteArrayColumnChunkWriter)
+			num, err = w.WriteBatch(buf, defLevels, nil)
+		case parquet.Types.Double:
 			buf := valueBuffer.([]float64)
-			spec.generateFloat64Parquet(rowIDStart, buf, defLevels, pw.rng)
 			w, _ := cw.(*file.Float64ColumnChunkWriter)
 			num, err = w.WriteBatch(buf, defLevels, nil)
-		case "varchar", "char", "blob", "tinyblob":
+		case parquet.Types.Float:
+			buf := valueBuffer.([]float32)
+			w, _ := cw.(*file.Float32ColumnChunkWriter)
+			num, err = w.WriteBatch(buf, defLevels, nil)
+		case parquet.Types.ByteArray:
 			buf := valueBuffer.([]parquet.ByteArray)
-			spec.generateStringParquet(rowIDStart, buf, defLevels, pw.rng)
 			w, _ := cw.(*file.ByteArrayColumnChunkWriter)
-			num, err = w.WriteBatch(buf, defLevels, nil)
-		case "json":
-			buf := valueBuffer.([]parquet.ByteArray)
-			spec.generateJSONParquet(rowIDStart, buf, defLevels, pw.rng)
-			w, _ := cw.(*file.ByteArrayColumnChunkWriter)
-			num, err = w.WriteBatch(buf, defLevels, nil)
-		case "date":
-			buf := valueBuffer.([]int32)
-			spec.generateDateParquet(buf, defLevels, pw.rng)
-			w, _ := cw.(*file.Int32ColumnChunkWriter)
-			num, err = w.WriteBatch(buf, defLevels, nil)
-		case "timestamp", "datetime":
-			buf := valueBuffer.([]int64)
-			spec.generateTimestampParquet(buf, defLevels, pw.rng)
-			w, _ := cw.(*file.Int64ColumnChunkWriter)
-			num, err = w.WriteBatch(buf, defLevels, nil)
-		case "time":
-			buf := valueBuffer.([]int64)
-			spec.generateTimestampParquet(buf, defLevels, pw.rng)
-			w, _ := cw.(*file.Int64ColumnChunkWriter)
-			num, err = w.WriteBatch(buf, defLevels, nil)
-		case "year":
-			buf := valueBuffer.([]int32)
-			spec.generateYearParquet(buf, defLevels, pw.rng)
-			w, _ := cw.(*file.Int32ColumnChunkWriter)
 			num, err = w.WriteBatch(buf, defLevels, nil)
 		default:
-			return 0, errors.Errorf("unsupported column writer type: %s", spec.SQLType)
+			return 0, errors.Errorf("unsupported parquet writer type: %v", columnSpec.Type)
 		}
 
 		written += num
@@ -312,8 +273,8 @@ func (g *ParquetGenerator) GenerateFile(
 	ctx context.Context,
 	writer storage.ExternalFileWriter,
 	fileNo int,
-	specs []*ColumnSpec,
-	cfg Config,
+	specs []*spec.ColumnSpec,
+	cfg config.Config,
 ) error {
 	return generateParquetFile(writer, fileNo, specs, cfg)
 }
@@ -321,8 +282,8 @@ func (g *ParquetGenerator) GenerateFile(
 func (g *ParquetGenerator) GenerateFileStreaming(
 	ctx context.Context,
 	fileNo int,
-	specs []*ColumnSpec,
-	cfg Config,
+	specs []*spec.ColumnSpec,
+	cfg config.Config,
 	chunkChannel chan<- *FileChunk,
 ) error {
 	return g.generateParquetFileStreaming(ctx, fileNo, specs, cfg, chunkChannel)
@@ -332,8 +293,8 @@ func (g *ParquetGenerator) GenerateFileStreaming(
 func generateParquetCommon(
 	wrapper *writeWrapper,
 	fileNo int,
-	specs []*ColumnSpec,
-	cfg Config,
+	specs []*spec.ColumnSpec,
+	cfg config.Config,
 ) error {
 	pw := ParquetWriter{}
 
@@ -362,8 +323,8 @@ func generateParquetCommon(
 func generateParquetFile(
 	writer storage.ExternalFileWriter,
 	fileNo int,
-	specs []*ColumnSpec,
-	cfg Config,
+	specs []*spec.ColumnSpec,
+	cfg config.Config,
 ) error {
 	wrapper := &writeWrapper{Writer: writer}
 	return generateParquetCommon(wrapper, fileNo, specs, cfg)
@@ -372,8 +333,8 @@ func generateParquetFile(
 func (g *ParquetGenerator) generateParquetFileStreaming(
 	ctx context.Context,
 	fileNo int,
-	specs []*ColumnSpec,
-	cfg Config,
+	specs []*spec.ColumnSpec,
+	cfg config.Config,
 	chunkChannel chan<- *FileChunk,
 ) error {
 	// Create a buffer to capture parquet data

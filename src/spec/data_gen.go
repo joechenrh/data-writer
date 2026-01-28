@@ -1,4 +1,4 @@
-package main
+package spec
 
 import (
 	"fmt"
@@ -424,7 +424,95 @@ func (c *ColumnSpec) generateStringParquet(_ int, out []parquet.ByteArray, defLe
 	}
 }
 
-func generateSingleField(rowID int, spec *ColumnSpec, rng *rand.Rand) string {
+// FillParquetBatch populates the provided buffer and definition levels for a Parquet column batch.
+func (c *ColumnSpec) FillParquetBatch(rowID int, valueBuffer any, defLevel []int16, rng *rand.Rand) error {
+	switch c.SQLType {
+	case "decimal":
+		switch c.Type {
+		case parquet.Types.Int32:
+			buf, ok := valueBuffer.([]int32)
+			if !ok {
+				return fmt.Errorf("unexpected buffer type for decimal int32: %T", valueBuffer)
+			}
+			c.generateDecimalInt32Parquet(rowID, buf, defLevel, rng)
+		case parquet.Types.Int64:
+			buf, ok := valueBuffer.([]int64)
+			if !ok {
+				return fmt.Errorf("unexpected buffer type for decimal int64: %T", valueBuffer)
+			}
+			c.generateDecimalInt64Parquet(rowID, buf, defLevel, rng)
+		case parquet.Types.FixedLenByteArray:
+			buf, ok := valueBuffer.([]parquet.FixedLenByteArray)
+			if !ok {
+				return fmt.Errorf("unexpected buffer type for decimal fixed len: %T", valueBuffer)
+			}
+			c.generateDecimalFixedLenParquet(rowID, buf, defLevel, rng)
+		default:
+			return fmt.Errorf("unsupported decimal parquet type: %v", c.Type)
+		}
+	case "bigint":
+		buf, ok := valueBuffer.([]int64)
+		if !ok {
+			return fmt.Errorf("unexpected buffer type for bigint: %T", valueBuffer)
+		}
+		c.generateInt64Parquet(rowID, buf, defLevel, rng)
+	case "int", "mediumint", "smallint", "tinyint":
+		buf, ok := valueBuffer.([]int32)
+		if !ok {
+			return fmt.Errorf("unexpected buffer type for int: %T", valueBuffer)
+		}
+		c.generateInt32Parquet(rowID, buf, defLevel, rng)
+	case "float":
+		buf, ok := valueBuffer.([]float32)
+		if !ok {
+			return fmt.Errorf("unexpected buffer type for float: %T", valueBuffer)
+		}
+		c.generateFloat32Parquet(rowID, buf, defLevel, rng)
+	case "double":
+		buf, ok := valueBuffer.([]float64)
+		if !ok {
+			return fmt.Errorf("unexpected buffer type for double: %T", valueBuffer)
+		}
+		c.generateFloat64Parquet(rowID, buf, defLevel, rng)
+	case "varchar", "char", "blob", "tinyblob":
+		buf, ok := valueBuffer.([]parquet.ByteArray)
+		if !ok {
+			return fmt.Errorf("unexpected buffer type for string: %T", valueBuffer)
+		}
+		c.generateStringParquet(rowID, buf, defLevel, rng)
+	case "json":
+		buf, ok := valueBuffer.([]parquet.ByteArray)
+		if !ok {
+			return fmt.Errorf("unexpected buffer type for json: %T", valueBuffer)
+		}
+		c.generateJSONParquet(rowID, buf, defLevel, rng)
+	case "date":
+		buf, ok := valueBuffer.([]int32)
+		if !ok {
+			return fmt.Errorf("unexpected buffer type for date: %T", valueBuffer)
+		}
+		c.generateDateParquet(buf, defLevel, rng)
+	case "timestamp", "datetime", "time":
+		buf, ok := valueBuffer.([]int64)
+		if !ok {
+			return fmt.Errorf("unexpected buffer type for time: %T", valueBuffer)
+		}
+		c.generateTimestampParquet(buf, defLevel, rng)
+	case "year":
+		buf, ok := valueBuffer.([]int32)
+		if !ok {
+			return fmt.Errorf("unexpected buffer type for year: %T", valueBuffer)
+		}
+		c.generateYearParquet(buf, defLevel, rng)
+	default:
+		return fmt.Errorf("unsupported column writer type: %s", c.SQLType)
+	}
+
+	return nil
+}
+
+// GenerateSingleField returns the string representation of a generated column value.
+func GenerateSingleField(rowID int, spec *ColumnSpec, rng *rand.Rand) string {
 	v, _ := spec.generate(rowID, rng)
 	switch val := v.(type) {
 	case string:

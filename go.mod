@@ -1,4 +1,4 @@
-module csvWriter
+module dataWriter
 
 go 1.23.12
 
@@ -6,6 +6,8 @@ require (
 	github.com/BurntSushi/toml v1.5.0
 	github.com/apache/arrow-go/v18 v18.3.0
 	github.com/apache/arrow/go/arrow v0.0.0-20211112161151-bc219186db40
+	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548
+	github.com/docker/go-units v0.5.0
 	github.com/google/uuid v1.6.0
 	github.com/pingcap/errors v0.11.5-0.20250523034308-74f78ae071ee
 	github.com/pingcap/tidb v1.1.0-beta.0.20250909154457-ec3ade5dea22
@@ -52,13 +54,11 @@ require (
 	github.com/coocood/rtutil v0.0.0-20190304133409-c84515f646f2 // indirect
 	github.com/coreos/go-semver v0.3.1 // indirect
 	github.com/coreos/go-systemd/v22 v22.5.0 // indirect
-	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548 // indirect
 	github.com/danjacques/gofslock v0.0.0-20240212154529-d899e02bfe22 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.2.0 // indirect
 	github.com/dgraph-io/ristretto v0.1.1 // indirect
 	github.com/dgryski/go-farm v0.0.0-20240924180020-3414d57e47da // indirect
-	github.com/docker/go-units v0.5.0 // indirect
 	github.com/dolthub/maphash v0.1.0 // indirect
 	github.com/dolthub/swiss v0.2.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect

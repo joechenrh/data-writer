@@ -1,4 +1,4 @@
-package main
+package spec
 
 import (
 	"encoding/json"
@@ -416,7 +416,8 @@ func readAndCleanSQL(sqlPath string) (string, error) {
 	return query, nil
 }
 
-func getSpecFromSQL(sqlPath string) ([]*ColumnSpec, error) {
+// GetSpecFromSQL parses a CREATE TABLE SQL file into column specs.
+func GetSpecFromSQL(sqlPath string) ([]*ColumnSpec, error) {
 	query, err := readAndCleanSQL(sqlPath)
 	if err != nil {
 		return nil, err

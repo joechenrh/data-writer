@@ -4,46 +4,26 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math/big"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sync/atomic"
 	"time"
 
-	"github.com/apache/arrow-go/v18/parquet"
-	"github.com/docker/go-units"
+	"dataWriter/src/config"
+	"dataWriter/src/spec"
+	"dataWriter/src/util"
+	"dataWriter/src/writer"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/schollz/progressbar/v3"
 	"golang.org/x/sync/errgroup"
 )
 
-func deduceTypeForDecimal(precision int) (parquet.Type, int) {
-	if precision <= 9 {
-		return parquet.Types.Int32, 0
-	}
-	if precision <= 18 {
-		return parquet.Types.Int64, 0
-	}
-
-	bits := decimalMaxDigitsBits(precision) + 1
-	byteLen := (bits + 7) / 8
-	return parquet.Types.FixedLenByteArray, byteLen
-}
-
-func decimalMaxDigitsBits(precision int) int {
-	if precision <= 0 {
-		return 0
-	}
-	pow10 := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(precision)), nil)
-	pow10.Sub(pow10, big.NewInt(1))
-	return pow10.BitLen()
-}
-
-func DeleteAllFiles(cfg Config) error {
+func DeleteAllFiles(cfg config.Config) error {
 	var fileNames []string
-	store, err := GetStore(cfg)
+	store, err := config.GetStore(cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -68,8 +48,8 @@ func DeleteAllFiles(cfg Config) error {
 	return eg.Wait()
 }
 
-func ShowFiles(cfg Config) error {
-	store, err := GetStore(cfg)
+func ShowFiles(cfg config.Config) error {
+	store, err := config.GetStore(cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -102,67 +82,11 @@ func (cw *countingWriter) Close(ctx context.Context) error {
 	return cw.writer.Close(ctx)
 }
 
-func startProgressLogger(
-	totalFiles int,
-	action string,
-	files *atomic.Int32,
-	bytes *atomic.Int64,
-	interval time.Duration,
-) {
-	if totalFiles <= 0 {
-		return
-	}
-
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-
-		prevFiles := int64(files.Load())
-		prevBytes := bytes.Load()
-		prevTime := time.Now()
-
-		for range ticker.C {
-			curFiles := int64(files.Load())
-			curBytes := bytes.Load()
-			now := time.Now()
-			elapsed := now.Sub(prevTime).Seconds()
-
-			filesPerSec := progressRate(curFiles-prevFiles, elapsed)
-			bytesPerSec := progressRate(curBytes-prevBytes, elapsed)
-
-			log.Printf(
-				"Progress: %s files %d (%.2f files/s), %s size %s (%.2f MiB/s)",
-				action,
-				curFiles,
-				filesPerSec,
-				action,
-				units.BytesSize(float64(curBytes)),
-				bytesPerSec/float64(units.MiB),
-			)
-
-			prevFiles = curFiles
-			prevBytes = curBytes
-			prevTime = now
-
-			if int(curFiles) >= totalFiles {
-				break
-			}
-		}
-	}()
-}
-
-func progressRate(delta int64, elapsedSeconds float64) float64 {
-	if elapsedSeconds <= 0 {
-		return 0
-	}
-	return float64(delta) / elapsedSeconds
-}
-
 func showProcess(totalFiles int) {
-	startProgressLogger(totalFiles, "written", &writtenFiles, &writtenBytes, 5*time.Second)
+	util.StartProgressLogger(totalFiles, "written", &writtenFiles, &writtenBytes, 5*time.Second)
 }
 
-func GenerateFiles(cfg Config) error {
+func GenerateFiles(cfg config.Config) error {
 	if cfg.Common.UseStreamingMode {
 		return generateFilesStreaming(cfg)
 	}
@@ -170,20 +94,20 @@ func GenerateFiles(cfg Config) error {
 }
 
 // Original direct writing approach
-func generateFilesDirect(cfg Config) error {
+func generateFilesDirect(cfg config.Config) error {
 	start := time.Now()
 	defer func() {
 		fmt.Printf("Generate and upload took %s (direct mode)\n", time.Since(start))
 	}()
 
-	store, err := GetStore(cfg)
+	store, err := config.GetStore(cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	defer store.Close()
 
-	specs, err := getSpecFromSQL(*sqlPath)
+	specs, err := spec.GetSpecFromSQL(*sqlPath)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -228,20 +152,20 @@ func generateFilesDirect(cfg Config) error {
 
 // New buffered approach with goroutine separation
 // New streaming approach that processes data in chunks
-func generateFilesStreaming(cfg Config) error {
+func generateFilesStreaming(cfg config.Config) error {
 	start := time.Now()
 	defer func() {
 		fmt.Printf("Generate and upload took %s (streaming mode)\n", time.Since(start))
 	}()
 
-	store, err := GetStore(cfg)
+	store, err := config.GetStore(cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	defer store.Close()
 
-	specs, err := getSpecFromSQL(*sqlPath)
+	specs, err := spec.GetSpecFromSQL(*sqlPath)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -254,7 +178,7 @@ func generateFilesStreaming(cfg Config) error {
 	showProcess(totalFiles)
 
 	// Initialize chunk calculator with configurable size
-	chunkCalculator := NewChunkSizeCalculator(&cfg)
+	chunkCalculator := writer.NewChunkSizeCalculator(&cfg)
 
 	// Log the calculated chunk parameters for visibility
 	estimatedRowSize := chunkCalculator.EstimateRowSize(specs)
@@ -262,13 +186,24 @@ func generateFilesStreaming(cfg Config) error {
 	fmt.Printf("Estimated row size: %d bytes, chunk size: %d rows\n", estimatedRowSize, chunkRows)
 
 	// Create streaming coordinator and let it handle all concurrency
-	coordinator := NewStreamingCoordinator(store, chunkCalculator)
+	coordinator := writer.NewStreamingCoordinator(store, chunkCalculator)
 
-	return coordinator.CoordinateStreaming(ctx, startNo, endNo, specs, cfg, &writtenFiles, &writtenBytes, *threads)
+	return coordinator.CoordinateStreaming(
+		ctx,
+		startNo,
+		endNo,
+		specs,
+		cfg,
+		generator,
+		suffix,
+		&writtenFiles,
+		&writtenBytes,
+		*threads,
+	)
 }
 
 // UploadLocalFiles uploads all files from a local directory to the configured remote path
-func UploadLocalFiles(cfg Config, localDir string) error {
+func UploadLocalFiles(cfg config.Config, localDir string) error {
 	start := time.Now()
 	defer func() {
 		fmt.Printf("Upload took %s\n", time.Since(start))
@@ -279,7 +214,7 @@ func UploadLocalFiles(cfg Config, localDir string) error {
 		return errors.Errorf("local directory does not exist: %s", localDir)
 	}
 
-	store, err := GetStore(cfg)
+	store, err := config.GetStore(cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}

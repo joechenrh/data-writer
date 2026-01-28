@@ -1,4 +1,4 @@
-package main
+package writer
 
 import (
 	"context"
@@ -6,6 +6,9 @@ import (
 	"math/rand"
 	"time"
 	"unsafe"
+
+	"dataWriter/src/config"
+	"dataWriter/src/spec"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -16,12 +19,12 @@ func string2Bytes(s string) []byte {
 }
 
 func generateCSVRow(
-	specs []*ColumnSpec,
+	specs []*spec.ColumnSpec,
 	rowID int, withBase64 bool,
 	rng *rand.Rand, buf []byte,
 ) []byte {
-	for i, spec := range specs {
-		s := generateSingleField(rowID, spec, rng)
+	for i, columnSpec := range specs {
+		s := spec.GenerateSingleField(rowID, columnSpec, rng)
 		if withBase64 {
 			s = base64.StdEncoding.EncodeToString(string2Bytes(s))
 		}
@@ -47,8 +50,8 @@ func (g *CSVGenerator) GenerateFile(
 	ctx context.Context,
 	writer storage.ExternalFileWriter,
 	fileNo int,
-	specs []*ColumnSpec,
-	cfg Config,
+	specs []*spec.ColumnSpec,
+	cfg config.Config,
 ) error {
 	return generateCSVFile(ctx, writer, fileNo, specs, cfg)
 }
@@ -56,8 +59,8 @@ func (g *CSVGenerator) GenerateFile(
 func (g *CSVGenerator) GenerateFileStreaming(
 	ctx context.Context,
 	fileNo int,
-	specs []*ColumnSpec,
-	cfg Config,
+	specs []*spec.ColumnSpec,
+	cfg config.Config,
 	chunkChannel chan<- *FileChunk,
 ) error {
 	return g.generateCSVFileStreaming(ctx, fileNo, specs, cfg, chunkChannel)
@@ -67,8 +70,8 @@ func generateCSVFile(
 	ctx context.Context,
 	writer storage.ExternalFileWriter,
 	fileNo int,
-	specs []*ColumnSpec,
-	cfg Config,
+	specs []*spec.ColumnSpec,
+	cfg config.Config,
 ) error {
 	var (
 		rng        = rand.New(rand.NewSource(time.Now().UnixNano() + int64(rand.Intn(16))))
@@ -90,8 +93,8 @@ func generateCSVFile(
 func (g *CSVGenerator) generateCSVFileStreaming(
 	ctx context.Context,
 	fileNo int,
-	specs []*ColumnSpec,
-	cfg Config,
+	specs []*spec.ColumnSpec,
+	cfg config.Config,
 	chunkChannel chan<- *FileChunk,
 ) error {
 	var (

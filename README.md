@@ -27,9 +27,33 @@ This operation will upload all files from the specified local directory to the p
 ./bin/parquet-writer -op delete -cfg config.toml
 ```
 
-## TODO
-1. Support more data types
-2. Test the speed of data generation
+## Speed
+
+Test with the following schema with 16 threads:
+
+```SQL
+CREATE TABLE `test` (
+    `id` bigint NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    `k` int NOT NULL DEFAULT '0',
+    `c` char(120) NOT NULL DEFAULT '' COMMENT 'max_length=120, min_length=120',
+    `pad` char(60) NOT NULL DEFAULT '' COMMENT 'max_length=60, min_length=60',
+    `int_0` int NOT NULL DEFAULT '0',
+    `int_1` int NOT NULL DEFAULT '0',
+    `int_2` int NOT NULL DEFAULT '0',
+    `bigint_0` bigint,
+    `bigint_1` bigint,
+    `bigint_2` bigint,
+    `varchar_0` varchar(768) NOT NULL DEFAULT '' COMMENT 'max_length=768, min_length=768',
+    `varchar_1` varchar(40) NOT NULL DEFAULT '' COMMENT 'max_length=40, min_length=40',
+    `text_0` text DEFAULT NULL COMMENT 'max_length=20000, min_length=20000, compress=40'
+);
+```
+
+```
+2026/01/28 03:15:40 Progress: written files 0 (0.00 files/s), written size 11.25GiB (2303.34 MiB/s)
+2026/01/28 03:15:45 Progress: written files 16 (3.20 files/s), written size 22.8GiB (2366.03 MiB/s)
+2026/01/28 03:15:50 Progress: written files 16 (0.00 files/s), written size 32.18GiB (1921.72 MiB/s)
+```
 
 ## Limitation
-- `UNSIGNED`, `DECIMAL` and `YEAR` is not supported yet.
+- `DECIMAL` is not supported for CSV yet.
