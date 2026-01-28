@@ -79,7 +79,7 @@ func GenerateFiles(cfg config.Config) error {
 	case "csv":
 		cfg.FileSuffix = "csv"
 		chunkCalculator := writer.NewChunkSizeCalculator(&cfg)
-		generator = writer.NewCSVGenerator(chunkCalculator)
+		generator = writer.NewCSVGenerator(chunkCalculator, cfg.CSV)
 	default:
 		return errors.Errorf("unsupported file format: %s", cfg.Common.FileFormat)
 	}

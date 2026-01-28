@@ -39,7 +39,9 @@ type ParquetConfig struct {
 }
 
 type CSVConfig struct {
-	Base64 bool `toml:"base64"`
+	Base64    bool   `toml:"base64"`
+	Separator string `toml:"separator,omitempty"`
+	EndLine   string `toml:"endline,omitempty"`
 }
 
 type Config struct {

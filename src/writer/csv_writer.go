@@ -18,10 +18,28 @@ func string2Bytes(s string) []byte {
 	return unsafe.Slice(unsafe.StringData(s), len(s))
 }
 
+const (
+	defaultCSVSeparator = ","
+	defaultCSVEndLine   = "\n"
+)
+
+func csvSeparatorAndEndline(cfg config.CSVConfig) (string, string) {
+	separator := cfg.Separator
+	if separator == "" {
+		separator = defaultCSVSeparator
+	}
+	endline := cfg.EndLine
+	if endline == "" {
+		endline = defaultCSVEndLine
+	}
+	return separator, endline
+}
+
 func generateCSVRow(
 	specs []*spec.ColumnSpec,
 	rowID int, withBase64 bool,
 	rng *rand.Rand, buf []byte,
+	separator []byte, endline []byte,
 ) []byte {
 	for i, columnSpec := range specs {
 		s := spec.GenerateSingleField(rowID, columnSpec, rng)
@@ -29,21 +47,28 @@ func generateCSVRow(
 			s = base64.StdEncoding.EncodeToString(string2Bytes(s))
 		}
 		if i > 0 {
-			buf = append(buf, ',')
+			buf = append(buf, separator...)
 		}
 		buf = append(buf, s...)
 	}
-	buf = append(buf, '\n')
+	buf = append(buf, endline...)
 	return buf
 }
 
 // CSVGenerator implements DataGenerator interface for CSV files
 type CSVGenerator struct {
 	chunkCalculator ChunkCalculator
+	separatorBytes  []byte
+	endlineBytes    []byte
 }
 
-func NewCSVGenerator(chunkCalculator ChunkCalculator) *CSVGenerator {
-	return &CSVGenerator{chunkCalculator: chunkCalculator}
+func NewCSVGenerator(chunkCalculator ChunkCalculator, cfg config.CSVConfig) *CSVGenerator {
+	separator, endline := csvSeparatorAndEndline(cfg)
+	return &CSVGenerator{
+		chunkCalculator: chunkCalculator,
+		separatorBytes:  []byte(separator),
+		endlineBytes:    []byte(endline),
+	}
 }
 
 func (g *CSVGenerator) GenerateFile(
@@ -53,7 +78,7 @@ func (g *CSVGenerator) GenerateFile(
 	specs []*spec.ColumnSpec,
 	cfg config.Config,
 ) error {
-	return generateCSVFile(ctx, writer, fileNo, specs, cfg)
+	return generateCSVFile(ctx, writer, fileNo, specs, cfg, g.separatorBytes, g.endlineBytes)
 }
 
 func (g *CSVGenerator) GenerateFileStreaming(
@@ -72,6 +97,8 @@ func generateCSVFile(
 	fileNo int,
 	specs []*spec.ColumnSpec,
 	cfg config.Config,
+	separatorBytes []byte,
+	endlineBytes []byte,
 ) error {
 	var (
 		rng        = rand.New(rand.NewSource(time.Now().UnixNano() + int64(rand.Intn(16))))
@@ -81,7 +108,7 @@ func generateCSVFile(
 
 	for i := range cfg.Common.Rows {
 		rowID := startRowID + i
-		buffer = generateCSVRow(specs, rowID, cfg.CSV.Base64, rng, buffer[:0])
+		buffer = generateCSVRow(specs, rowID, cfg.CSV.Base64, rng, buffer[:0], separatorBytes, endlineBytes)
 		if _, err := writer.Write(ctx, buffer); err != nil {
 			return err
 		}
@@ -115,7 +142,7 @@ func (g *CSVGenerator) generateCSVFileStreaming(
 
 		for i := range rowsInChunk {
 			rowID := startRowID + rowOffset + i
-			buffer = generateCSVRow(specs, rowID, cfg.CSV.Base64, rng, buffer)
+			buffer = generateCSVRow(specs, rowID, cfg.CSV.Base64, rng, buffer, g.separatorBytes, g.endlineBytes)
 		}
 
 		select {

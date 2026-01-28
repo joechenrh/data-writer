@@ -61,7 +61,12 @@ func (c *ChunkSizeCalculator) EstimateRowSize(specs []*spec.ColumnSpec) int {
 
 	// Add overhead for delimiters (CSV) or encoding (Parquet)
 	if c.cfg.Common.FileFormat == "csv" {
-		totalSize += len(specs)
+		separator, endline := csvSeparatorAndEndline(c.cfg.CSV)
+		delimiterOverhead := len(endline)
+		if len(specs) > 0 {
+			delimiterOverhead += (len(specs) - 1) * len(separator)
+		}
+		totalSize += delimiterOverhead
 	} else {
 		totalSize = int(float64(totalSize) * 1.2) // 20% overhead for Parquet encoding
 	}
