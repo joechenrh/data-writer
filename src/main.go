@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"dataWriter/src/config"
-	"dataWriter/src/writer"
 
 	"github.com/BurntSushi/toml"
 )
@@ -20,11 +19,6 @@ var (
 	threads    = flag.Int("threads", 16, "threads")
 	localDir   = flag.String("dir", "", "local directory for upload operation")
 	cpuProfile = flag.String("cpuprofile", "", "write cpu profile to file (or use CPUPROFILE env var)")
-)
-
-var (
-	suffix    string
-	generator writer.DataGenerator
 )
 
 func main() {
@@ -53,19 +47,6 @@ func main() {
 
 	var cfg config.Config
 	toml.DecodeFile(*cfgPath, &cfg)
-
-	chunkCalculator := writer.NewChunkSizeCalculator(&cfg)
-
-	switch strings.ToLower(cfg.Common.FileFormat) {
-	case "parquet":
-		suffix = "parquet"
-		generator = writer.NewParquetGenerator()
-	case "csv":
-		suffix = "csv"
-		generator = writer.NewCSVGenerator(chunkCalculator)
-	default:
-		log.Fatalf("Unsupported file format: %s", cfg.Common.FileFormat)
-	}
 
 	switch strings.ToLower(*operation) {
 	case "delete":

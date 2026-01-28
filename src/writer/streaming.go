@@ -2,7 +2,6 @@ package writer
 
 import (
 	"context"
-	"fmt"
 
 	"dataWriter/src/config"
 	"dataWriter/src/spec"
@@ -99,47 +98,12 @@ func NewStreamingCoordinator(store storage.ExternalStorage, chunkCalculator Chun
 	}
 }
 
-// fileWriter handles writing for a single file from its dedicated channel
-func (sc *StreamingCoordinator) fileWriter(
-	ctx context.Context,
-	fileName string,
-	chunkChannel <-chan *FileChunk,
-	progress *util.ProgressLogger,
-) error {
-	writer, err := sc.store.Create(ctx, fileName, &storage.WriterOption{
-		Concurrency: 8,
-	})
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer writer.Close(ctx)
-
-	for chunk := range chunkChannel {
-		if len(chunk.Data) > 0 {
-			n, err := writer.Write(ctx, chunk.Data)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if n > 0 && progress != nil {
-				progress.UpdateBytes(int64(n))
-			}
-		}
-
-		if chunk.IsLast {
-			break
-		}
-	}
-
-	return nil
-}
-
 // CoordinateStreaming manages the complete streaming process with paired goroutines
 func (sc *StreamingCoordinator) CoordinateStreaming(
 	ctx context.Context, startNo, endNo int,
 	specs []*spec.ColumnSpec,
 	cfg config.Config,
 	generator DataGenerator,
-	suffix string,
 	progress *util.ProgressLogger,
 	threads int,
 ) error {
@@ -152,11 +116,10 @@ func (sc *StreamingCoordinator) CoordinateStreaming(
 
 	// Create one generator-writer pair for each file
 	for i := startNo; i < endNo; i++ {
-		fileNo := i
 		eg.Go(func() error {
-			fileName := fmt.Sprintf("%s.%d.%s", cfg.Common.Prefix, fileNo, suffix)
-			if cfg.Common.Folders > 1 {
-				fileName = fmt.Sprintf("part%d/%s.%d.%s", fileNo%cfg.Common.Folders, cfg.Common.Prefix, fileNo, suffix)
+			writer, err := util.OpenWriter(ctx, &cfg, sc.store, i, progress)
+			if err != nil {
+				return errors.Trace(err)
 			}
 
 			chunkChannel := make(chan *FileChunk, 4)
@@ -164,16 +127,24 @@ func (sc *StreamingCoordinator) CoordinateStreaming(
 			// Start writer goroutine for this file
 			var writerGroup errgroup.Group
 			writerGroup.Go(func() error {
-				err := sc.fileWriter(ctx, fileName, chunkChannel, progress)
-				if err != nil {
-					// Cancel context on writer error to stop generation
-					cancel()
+				defer writer.Close(ctx)
+				for chunk := range chunkChannel {
+					if len(chunk.Data) > 0 {
+						if _, err := writer.Write(ctx, chunk.Data); err != nil {
+							return errors.Trace(err)
+						}
+					}
+
+					if chunk.IsLast {
+						break
+					}
 				}
-				return err
+
+				return nil
 			})
 
 			// Generate file in current goroutine, sending chunks to its writer
-			err := generator.GenerateFileStreaming(ctx, fileNo, specs, cfg, chunkChannel)
+			err = generator.GenerateFileStreaming(ctx, i, specs, cfg, chunkChannel)
 			close(chunkChannel)
 
 			if err != nil {

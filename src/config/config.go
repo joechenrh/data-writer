@@ -48,6 +48,9 @@ type Config struct {
 	CSV       CSVConfig     `toml:"csv"`
 	S3Config  *S3Config     `toml:"s3,omitempty"`
 	GCSConfig *GCSConfig    `toml:"gcs,omitempty"`
+
+	// FileSuffix is derived at runtime and not read from config.
+	FileSuffix string `toml:"-"`
 }
 
 // GetStore initializes and returns an ExternalStorage instance based on the provided configuration.

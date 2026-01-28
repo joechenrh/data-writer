@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -65,36 +66,32 @@ func ShowFiles(cfg config.Config) error {
 	return nil
 }
 
-type countingWriter struct {
-	writer   storage.ExternalFileWriter
-	progress *util.ProgressLogger
-}
-
-func (cw *countingWriter) Write(ctx context.Context, p []byte) (int, error) {
-	n, err := cw.writer.Write(ctx, p)
-	if n > 0 && cw.progress != nil {
-		cw.progress.UpdateBytes(int64(n))
-	}
-	return n, err
-}
-
-func (cw *countingWriter) Close(ctx context.Context) error {
-	return cw.writer.Close(ctx)
-}
-
 func showProcess(totalFiles int) *util.ProgressLogger {
 	return util.NewProgressLogger(totalFiles, "written", 5*time.Second)
 }
 
 func GenerateFiles(cfg config.Config) error {
-	if cfg.Common.UseStreamingMode {
-		return generateFilesStreaming(cfg)
+	var generator writer.DataGenerator
+	switch strings.ToLower(cfg.Common.FileFormat) {
+	case "parquet":
+		cfg.FileSuffix = "parquet"
+		generator = writer.NewParquetGenerator()
+	case "csv":
+		cfg.FileSuffix = "csv"
+		chunkCalculator := writer.NewChunkSizeCalculator(&cfg)
+		generator = writer.NewCSVGenerator(chunkCalculator)
+	default:
+		return errors.Errorf("unsupported file format: %s", cfg.Common.FileFormat)
 	}
-	return generateFilesDirect(cfg)
+
+	if cfg.Common.UseStreamingMode {
+		return generateFilesStreaming(cfg, generator)
+	}
+	return generateFilesDirect(cfg, generator)
 }
 
 // Original direct writing approach
-func generateFilesDirect(cfg config.Config) error {
+func generateFilesDirect(cfg config.Config, generator writer.DataGenerator) error {
 	start := time.Now()
 	defer func() {
 		fmt.Printf("Generate and upload took %s (direct mode)\n", time.Since(start))
@@ -122,24 +119,15 @@ func generateFilesDirect(cfg config.Config) error {
 	startNo, endNo := cfg.Common.StartFileNo, cfg.Common.EndFileNo
 	progress := showProcess(endNo - startNo)
 
-	for i := startNo; i < endNo; i++ {
-		fileNo := i
+	for fileNo := startNo; fileNo < endNo; fileNo++ {
 		eg.Go(func() error {
-			fileName := fmt.Sprintf("%s.%d.%s", cfg.Common.Prefix, fileNo, suffix)
-			if cfg.Common.Folders > 1 {
-				fileName = fmt.Sprintf("part%d/%s.%d.%s", fileNo%cfg.Common.Folders, cfg.Common.Prefix, fileNo, suffix)
-			}
-
-			writer, err := store.Create(ctx, fileName, &storage.WriterOption{
-				Concurrency: 8,
-			})
+			writer, err := util.OpenWriter(ctx, &cfg, store, fileNo, progress)
 			if err != nil {
 				return errors.Trace(err)
 			}
 
-			writerWithCount := &countingWriter{writer: writer, progress: progress}
-			defer writerWithCount.Close(ctx)
-			if err = generator.GenerateFile(ctx, writerWithCount, fileNo, specs, cfg); err != nil {
+			defer writer.Close(ctx)
+			if err = generator.GenerateFile(ctx, writer, fileNo, specs, cfg); err != nil {
 				return errors.Trace(err)
 			}
 			progress.UpdateFiles(1)
@@ -152,7 +140,7 @@ func generateFilesDirect(cfg config.Config) error {
 
 // New buffered approach with goroutine separation
 // New streaming approach that processes data in chunks
-func generateFilesStreaming(cfg config.Config) error {
+func generateFilesStreaming(cfg config.Config, generator writer.DataGenerator) error {
 	start := time.Now()
 	defer func() {
 		fmt.Printf("Generate and upload took %s (streaming mode)\n", time.Since(start))
@@ -162,7 +150,6 @@ func generateFilesStreaming(cfg config.Config) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	defer store.Close()
 
 	specs, err := spec.GetSpecFromSQL(*sqlPath)
@@ -195,7 +182,6 @@ func generateFilesStreaming(cfg config.Config) error {
 		specs,
 		cfg,
 		generator,
-		suffix,
 		progress,
 		*threads,
 	)
@@ -266,8 +252,7 @@ func UploadLocalFiles(cfg config.Config, localDir string) error {
 	}()
 
 	// Upload each file
-	for _, localPath := range filesToUpload {
-		filePath := localPath
+	for _, filePath := range filesToUpload {
 		eg.Go(func() error {
 			// Get relative path from localDir
 			relPath, err := filepath.Rel(localDir, filePath)
