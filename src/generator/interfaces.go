@@ -1,31 +1,33 @@
-package writer
+package generator
 
 import (
 	"context"
 
-	"dataWriter/src/config"
 	"dataWriter/src/spec"
+	"dataWriter/src/util"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
 )
 
-// DataGenerator interface for file generation
-type DataGenerator interface {
-	GenerateFile(
+type SpecificGenerator interface {
+	GenerateOneFile(
 		ctx context.Context,
 		writer storage.ExternalFileWriter,
 		fileNo int,
-		specs []*spec.ColumnSpec,
-		cfg config.Config,
 	) error
 
-	GenerateFileStreaming(
+	GenerateOneFileStreaming(
 		ctx context.Context,
 		fileNo int,
-		specs []*spec.ColumnSpec,
-		cfg config.Config,
-		chunkChannel chan<- *FileChunk,
+		chunkChannel chan<- *util.FileChunk,
 	) error
+}
+
+// FileGenerator generates files in a specific format.
+type FileGenerator interface {
+	Generate(threads int) error
+
+	GenerateStreaming(thread int) error
 }
 
 // ChunkCalculator interface for determining optimal chunk sizes

@@ -12,16 +12,14 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-var (
-	operation  = flag.String("op", "create", "create/delete/show/upload, default is create")
-	sqlPath    = flag.String("sql", "", "sql path")
-	cfgPath    = flag.String("cfg", "", "config path")
-	threads    = flag.Int("threads", 16, "threads")
-	localDir   = flag.String("dir", "", "local directory for upload operation")
-	cpuProfile = flag.String("cpuprofile", "", "write cpu profile to file (or use CPUPROFILE env var)")
-)
-
 func main() {
+	operation := flag.String("op", "create", "create/delete/show/upload, default is create")
+	sqlPath := flag.String("sql", "", "sql path")
+	cfgPath := flag.String("cfg", "", "config path")
+	threads := flag.Int("threads", 16, "threads")
+	localDir := flag.String("dir", "", "local directory for upload operation")
+	cpuProfile := flag.String("cpuprofile", "", "write cpu profile to file (or use CPUPROFILE env var)")
+
 	flag.Parse()
 
 	profilePath := *cpuProfile
@@ -50,22 +48,22 @@ func main() {
 
 	switch strings.ToLower(*operation) {
 	case "delete":
-		if err := DeleteAllFiles(cfg); err != nil {
+		if err := DeleteAllFiles(&cfg); err != nil {
 			log.Fatalf("Failed to delete files: %v", err)
 		}
 	case "show":
-		if err := ShowFiles(cfg); err != nil {
+		if err := ShowFiles(&cfg); err != nil {
 			log.Fatalf("Failed to show files: %v", err)
 		}
 	case "create":
-		if err := GenerateFiles(cfg); err != nil {
+		if err := GenerateFiles(&cfg, *sqlPath, *threads); err != nil {
 			log.Fatalf("Failed to generate files: %v", err)
 		}
 	case "upload":
 		if *localDir == "" {
 			log.Fatalf("Local directory (-dir) must be specified for upload operation")
 		}
-		if err := UploadLocalFiles(cfg, *localDir); err != nil {
+		if err := UploadLocalFiles(&cfg, *localDir, *threads); err != nil {
 			log.Fatalf("Failed to upload files: %v", err)
 		}
 	default:

@@ -26,15 +26,29 @@ type ProgressLogger struct {
 	bar        *progressbar.ProgressBar
 }
 
-// NewProgressLogger creates and starts a progress logger.
-func NewProgressLogger(totalFiles int, action string, interval time.Duration) *ProgressLogger {
-	logger := &ProgressLogger{
-		totalFiles: totalFiles,
-		action:     action,
-		interval:   interval,
+var (
+	globalProgressLogger *ProgressLogger
+)
+
+// InitializeProgressLogger creates and starts a progress logger.
+func InitializeProgressLogger(
+	totalFiles int,
+	action string,
+	interval time.Duration,
+) *ProgressLogger {
+	if globalProgressLogger == nil {
+		globalProgressLogger = &ProgressLogger{
+			totalFiles: totalFiles,
+			action:     action,
+			interval:   interval,
+		}
+		globalProgressLogger.start()
 	}
-	logger.start()
-	return logger
+	return globalProgressLogger
+}
+
+func GetProgressLogger() *ProgressLogger {
+	return globalProgressLogger
 }
 
 // UpdateBytes increments the byte counter.

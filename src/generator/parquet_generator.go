@@ -1,4 +1,4 @@
-package writer
+package generator
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 
 	"dataWriter/src/config"
 	"dataWriter/src/spec"
+	"dataWriter/src/util"
 
 	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/compress"
@@ -260,33 +261,57 @@ func (pw *ParquetWriter) Write(startRowID int) error {
 	return nil
 }
 
-// ParquetGenerator implements DataGenerator interface for Parquet files
+// ParquetGenerator implements FileGenerator interface for Parquet files
 type ParquetGenerator struct {
+	*fileGenerator
 }
 
 // NewParquetGenerator creates a new Parquet generator
-func NewParquetGenerator() *ParquetGenerator {
-	return &ParquetGenerator{}
+func NewParquetGenerator(
+	cfg *config.Config, sqlPath string,
+) (*fileGenerator, error) {
+	gen, err := newFileGenerator(cfg, sqlPath)
+	if err != nil {
+		return nil, err
+	}
+
+	parquetGen := &ParquetGenerator{
+		fileGenerator: gen,
+	}
+	gen.fileSuffix = "parquet"
+	gen.SpecificGenerator = parquetGen
+	return gen, nil
 }
 
-func (g *ParquetGenerator) GenerateFile(
+func (g *ParquetGenerator) GenerateOneFile(
 	ctx context.Context,
 	writer storage.ExternalFileWriter,
 	fileNo int,
-	specs []*spec.ColumnSpec,
-	cfg config.Config,
 ) error {
-	return generateParquetFile(writer, fileNo, specs, cfg)
+	wrapper := &writeWrapper{Writer: writer}
+	return generateParquetCommon(wrapper, fileNo, g.specs, g.Config)
 }
 
-func (g *ParquetGenerator) GenerateFileStreaming(
+func (g *ParquetGenerator) GenerateOneFileStreaming(
 	ctx context.Context,
 	fileNo int,
-	specs []*spec.ColumnSpec,
-	cfg config.Config,
-	chunkChannel chan<- *FileChunk,
+	chunkChannel chan<- *util.FileChunk,
 ) error {
-	return g.generateParquetFileStreaming(ctx, fileNo, specs, cfg, chunkChannel)
+	// Create a buffer to capture parquet data
+	buffer := &bytes.Buffer{}
+
+	targetChunkSize := 8 << 20 // Default 8MB
+	if g.Config.Common.ChunkSizeKB > 0 {
+		targetChunkSize = g.Config.Common.ChunkSizeKB * 1024
+	}
+
+	wrapper := &writeWrapper{Writer: &streamingParquetWriter{
+		buffer:       buffer,
+		chunkChannel: chunkChannel,
+		chunkSize:    targetChunkSize,
+		ctx:          ctx,
+	}}
+	return generateParquetCommon(wrapper, fileNo, g.specs, g.Config)
 }
 
 // Common parquet generation function that works with any writer
@@ -294,7 +319,7 @@ func generateParquetCommon(
 	wrapper *writeWrapper,
 	fileNo int,
 	specs []*spec.ColumnSpec,
-	cfg config.Config,
+	cfg *config.Config,
 ) error {
 	pw := ParquetWriter{}
 
@@ -320,44 +345,10 @@ func generateParquetCommon(
 	return nil
 }
 
-func generateParquetFile(
-	writer storage.ExternalFileWriter,
-	fileNo int,
-	specs []*spec.ColumnSpec,
-	cfg config.Config,
-) error {
-	wrapper := &writeWrapper{Writer: writer}
-	return generateParquetCommon(wrapper, fileNo, specs, cfg)
-}
-
-func (g *ParquetGenerator) generateParquetFileStreaming(
-	ctx context.Context,
-	fileNo int,
-	specs []*spec.ColumnSpec,
-	cfg config.Config,
-	chunkChannel chan<- *FileChunk,
-) error {
-	// Create a buffer to capture parquet data
-	buffer := &bytes.Buffer{}
-
-	targetChunkSize := 8 << 20 // Default 8MB
-	if cfg.Common.ChunkSizeKB > 0 {
-		targetChunkSize = cfg.Common.ChunkSizeKB * 1024
-	}
-
-	wrapper := &writeWrapper{Writer: &streamingParquetWriter{
-		buffer:       buffer,
-		chunkChannel: chunkChannel,
-		chunkSize:    targetChunkSize,
-		ctx:          ctx,
-	}}
-	return generateParquetCommon(wrapper, fileNo, specs, cfg)
-}
-
 // Custom writer for streaming parquet data in chunks
 type streamingParquetWriter struct {
 	buffer       *bytes.Buffer
-	chunkChannel chan<- *FileChunk
+	chunkChannel chan<- *util.FileChunk
 	chunkSize    int
 	lastSent     int
 	ctx          context.Context
@@ -374,7 +365,7 @@ func (w *streamingParquetWriter) Write(ctx context.Context, data []byte) (int, e
 		chunkData := make([]byte, w.chunkSize)
 		copy(chunkData, w.buffer.Bytes()[w.lastSent:w.lastSent+w.chunkSize])
 
-		chunk := &FileChunk{
+		chunk := &util.FileChunk{
 			Data:   chunkData,
 			IsLast: false,
 		}
@@ -402,7 +393,7 @@ func (w *streamingParquetWriter) Close(ctx context.Context) error {
 	// Send any remaining data
 	remaining := w.buffer.Len() - w.lastSent
 	if remaining > 0 {
-		chunk := &FileChunk{
+		chunk := &util.FileChunk{
 			Data:   w.buffer.Bytes()[w.lastSent:],
 			IsLast: true,
 		}
@@ -413,7 +404,7 @@ func (w *streamingParquetWriter) Close(ctx context.Context) error {
 		}
 	} else {
 		// Send empty final chunk to signal completion
-		chunk := &FileChunk{
+		chunk := &util.FileChunk{
 			Data:   []byte{},
 			IsLast: true,
 		}

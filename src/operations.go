@@ -7,21 +7,19 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"sync/atomic"
 	"time"
 
 	"dataWriter/src/config"
-	"dataWriter/src/spec"
+	"dataWriter/src/generator"
 	"dataWriter/src/util"
-	"dataWriter/src/writer"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"golang.org/x/sync/errgroup"
 )
 
-func DeleteAllFiles(cfg config.Config) error {
+func DeleteAllFiles(cfg *config.Config) error {
 	var fileNames []string
 	store, err := config.GetStore(cfg)
 	if err != nil {
@@ -48,7 +46,7 @@ func DeleteAllFiles(cfg config.Config) error {
 	return eg.Wait()
 }
 
-func ShowFiles(cfg config.Config) error {
+func ShowFiles(cfg *config.Config) error {
 	store, err := config.GetStore(cfg)
 	if err != nil {
 		return errors.Trace(err)
@@ -65,129 +63,20 @@ func ShowFiles(cfg config.Config) error {
 	return nil
 }
 
-func showProcess(totalFiles int) *util.ProgressLogger {
-	return util.NewProgressLogger(totalFiles, "writing", time.Second)
-}
-
-func GenerateFiles(cfg config.Config) error {
-	var generator writer.DataGenerator
-	switch strings.ToLower(cfg.Common.FileFormat) {
-	case "parquet":
-		cfg.FileSuffix = "parquet"
-		generator = writer.NewParquetGenerator()
-	case "csv":
-		cfg.FileSuffix = "csv"
-		chunkCalculator := writer.NewChunkSizeCalculator(&cfg)
-		generator = writer.NewCSVGenerator(chunkCalculator, cfg.CSV)
-	default:
-		return errors.Errorf("unsupported file format: %s", cfg.Common.FileFormat)
+func GenerateFiles(cfg *config.Config, sqlPath string, threads int) error {
+	gen, err := generator.NewFileGenerator(cfg, sqlPath)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	if cfg.Common.UseStreamingMode {
-		return generateFilesStreaming(cfg, generator)
+		return gen.GenerateStreaming(threads)
 	}
-	return generateFilesDirect(cfg, generator)
-}
-
-// Original direct writing approach
-func generateFilesDirect(cfg config.Config, generator writer.DataGenerator) error {
-	start := time.Now()
-	defer func() {
-		fmt.Printf("Generate and upload took %s (direct mode)\n", time.Since(start))
-	}()
-
-	store, err := config.GetStore(cfg)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	defer store.Close()
-
-	specs, err := spec.GetSpecFromSQL(*sqlPath)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	ctx := context.Background()
-
-	fmt.Print("Generating files (streaming mode)\n")
-	for _, spec := range specs {
-		fmt.Println(spec.String())
-	}
-
-	eg, _ := errgroup.WithContext(ctx)
-	eg.SetLimit(*threads)
-
-	startNo, endNo := cfg.Common.StartFileNo, cfg.Common.EndFileNo
-	progress := showProcess(endNo - startNo)
-
-	for fileNo := startNo; fileNo < endNo; fileNo++ {
-		eg.Go(func() error {
-			writer, err := util.OpenWriter(ctx, &cfg, store, fileNo, progress)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			defer writer.Close(ctx)
-			if err = generator.GenerateFile(ctx, writer, fileNo, specs, cfg); err != nil {
-				return errors.Trace(err)
-			}
-			progress.UpdateFiles(1)
-			return nil
-		})
-	}
-
-	return errors.Trace(eg.Wait())
-}
-
-// New buffered approach with goroutine separation
-// New streaming approach that processes data in chunks
-func generateFilesStreaming(cfg config.Config, generator writer.DataGenerator) error {
-	start := time.Now()
-	defer func() {
-		fmt.Printf("Generate and upload took %s (streaming mode)\n", time.Since(start))
-	}()
-
-	store, err := config.GetStore(cfg)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer store.Close()
-
-	specs, err := spec.GetSpecFromSQL(*sqlPath)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	ctx := context.Background()
-
-	fmt.Print("Generating files (streaming mode)\n")
-	for _, spec := range specs {
-		fmt.Println(spec.String())
-	}
-
-	startNo, endNo := cfg.Common.StartFileNo, cfg.Common.EndFileNo
-	totalFiles := endNo - startNo
-	progress := showProcess(totalFiles)
-
-	// Initialize chunk calculator with configurable size
-	chunkCalculator := writer.NewChunkSizeCalculator(&cfg)
-
-	// Create streaming coordinator and let it handle all concurrency
-	coordinator := writer.NewStreamingCoordinator(store, chunkCalculator)
-
-	return coordinator.CoordinateStreaming(
-		ctx,
-		startNo,
-		endNo,
-		specs,
-		cfg,
-		generator,
-		progress,
-		*threads,
-	)
+	return gen.Generate(threads)
 }
 
 // UploadLocalFiles uploads all files from a local directory to the configured remote path
-func UploadLocalFiles(cfg config.Config, localDir string) error {
+func UploadLocalFiles(cfg *config.Config, localDir string, threads int) error {
 	start := time.Now()
 	defer func() {
 		fmt.Printf("Upload took %s\n", time.Since(start))
@@ -230,7 +119,7 @@ func UploadLocalFiles(cfg config.Config, localDir string) error {
 
 	ctx := context.Background()
 	eg, _ := errgroup.WithContext(ctx)
-	eg.SetLimit(*threads)
+	eg.SetLimit(threads)
 
 	// Progress tracking
 	var uploadedFiles atomic.Int32

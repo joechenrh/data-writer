@@ -1,4 +1,4 @@
-package writer
+package generator
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 
 	"dataWriter/src/config"
 	"dataWriter/src/spec"
+	"dataWriter/src/util"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -16,23 +17,6 @@ import (
 
 func string2Bytes(s string) []byte {
 	return unsafe.Slice(unsafe.StringData(s), len(s))
-}
-
-const (
-	defaultCSVSeparator = ","
-	defaultCSVEndLine   = "\n"
-)
-
-func csvSeparatorAndEndline(cfg config.CSVConfig) (string, string) {
-	separator := cfg.Separator
-	if separator == "" {
-		separator = defaultCSVSeparator
-	}
-	endline := cfg.EndLine
-	if endline == "" {
-		endline = defaultCSVEndLine
-	}
-	return separator, endline
 }
 
 func generateCSVRow(
@@ -55,60 +39,53 @@ func generateCSVRow(
 	return buf
 }
 
-// CSVGenerator implements DataGenerator interface for CSV files
+// CSVGenerator implements FileGenerator interface for CSV files
 type CSVGenerator struct {
+	*fileGenerator
+
 	chunkCalculator ChunkCalculator
 	separatorBytes  []byte
 	endlineBytes    []byte
 }
 
-func NewCSVGenerator(chunkCalculator ChunkCalculator, cfg config.CSVConfig) *CSVGenerator {
-	separator, endline := csvSeparatorAndEndline(cfg)
-	return &CSVGenerator{
-		chunkCalculator: chunkCalculator,
+func NewCSVGenerator(
+	cfg *config.Config,
+	sqlPath string,
+) (*fileGenerator, error) {
+	gen, err := newFileGenerator(cfg, sqlPath)
+	if err != nil {
+		return nil, err
+	}
+
+	separator, endline := util.CSVSeparatorAndEndline(cfg.CSV)
+	csvGen := &CSVGenerator{
+		fileGenerator:   gen,
+		chunkCalculator: util.NewChunkSizeCalculator(cfg),
 		separatorBytes:  []byte(separator),
 		endlineBytes:    []byte(endline),
 	}
+
+	gen.fileSuffix = "csv"
+	gen.SpecificGenerator = csvGen
+	return gen, nil
 }
 
-func (g *CSVGenerator) GenerateFile(
+func (g *CSVGenerator) GenerateOneFile(
 	ctx context.Context,
 	writer storage.ExternalFileWriter,
 	fileNo int,
-	specs []*spec.ColumnSpec,
-	cfg config.Config,
-) error {
-	return generateCSVFile(ctx, writer, fileNo, specs, cfg, g.separatorBytes, g.endlineBytes)
-}
-
-func (g *CSVGenerator) GenerateFileStreaming(
-	ctx context.Context,
-	fileNo int,
-	specs []*spec.ColumnSpec,
-	cfg config.Config,
-	chunkChannel chan<- *FileChunk,
-) error {
-	return g.generateCSVFileStreaming(ctx, fileNo, specs, cfg, chunkChannel)
-}
-
-func generateCSVFile(
-	ctx context.Context,
-	writer storage.ExternalFileWriter,
-	fileNo int,
-	specs []*spec.ColumnSpec,
-	cfg config.Config,
-	separatorBytes []byte,
-	endlineBytes []byte,
 ) error {
 	var (
 		rng        = rand.New(rand.NewSource(time.Now().UnixNano() + int64(rand.Intn(16))))
 		buffer     = make([]byte, 0, 64*units.KiB)
-		startRowID = fileNo * cfg.Common.Rows
+		startRowID = fileNo * g.Config.Common.Rows
 	)
 
-	for i := range cfg.Common.Rows {
+	for i := range g.Config.Common.Rows {
 		rowID := startRowID + i
-		buffer = generateCSVRow(specs, rowID, cfg.CSV.Base64, rng, buffer[:0], separatorBytes, endlineBytes)
+		buffer = generateCSVRow(
+			g.specs, rowID, g.Config.CSV.Base64, rng,
+			buffer[:0], g.separatorBytes, g.endlineBytes)
 		if _, err := writer.Write(ctx, buffer); err != nil {
 			return err
 		}
@@ -117,19 +94,18 @@ func generateCSVFile(
 	return nil
 }
 
-func (g *CSVGenerator) generateCSVFileStreaming(
+func (g *CSVGenerator) GenerateOneFileStreaming(
 	ctx context.Context,
 	fileNo int,
-	specs []*spec.ColumnSpec,
-	cfg config.Config,
-	chunkChannel chan<- *FileChunk,
+	chunkChannel chan<- *util.FileChunk,
 ) error {
 	var (
 		rng = rand.New(rand.NewSource(time.Now().UnixNano() + int64(rand.Intn(16))))
 
-		startRowID = fileNo * cfg.Common.Rows
-		totalRows  = cfg.Common.Rows
+		startRowID = fileNo * g.Config.Common.Rows
+		totalRows  = g.Config.Common.Rows
 
+		specs      = g.specs
 		rowSize    = g.chunkCalculator.EstimateRowSize(specs)
 		chunkRows  = g.chunkCalculator.CalculateChunkSize(specs)
 		bufferSize = rowSize * chunkRows * 3 / 2
@@ -142,11 +118,13 @@ func (g *CSVGenerator) generateCSVFileStreaming(
 
 		for i := range rowsInChunk {
 			rowID := startRowID + rowOffset + i
-			buffer = generateCSVRow(specs, rowID, cfg.CSV.Base64, rng, buffer, g.separatorBytes, g.endlineBytes)
+			buffer = generateCSVRow(
+				specs, rowID, g.Config.CSV.Base64, rng,
+				buffer, g.separatorBytes, g.endlineBytes)
 		}
 
 		select {
-		case chunkChannel <- &FileChunk{
+		case chunkChannel <- &util.FileChunk{
 			Data:   buffer,
 			IsLast: isLast,
 		}:

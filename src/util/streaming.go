@@ -1,17 +1,28 @@
-package writer
+package util
 
 import (
-	"context"
-
 	"dataWriter/src/config"
 	"dataWriter/src/spec"
-	"dataWriter/src/util"
 
 	"github.com/docker/go-units"
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
-	"golang.org/x/sync/errgroup"
 )
+
+const (
+	defaultCSVSeparator = ","
+	defaultCSVEndLine   = "\n"
+)
+
+func CSVSeparatorAndEndline(cfg config.CSVConfig) (string, string) {
+	separator := cfg.Separator
+	if separator == "" {
+		separator = defaultCSVSeparator
+	}
+	endline := cfg.EndLine
+	if endline == "" {
+		endline = defaultCSVEndLine
+	}
+	return separator, endline
+}
 
 // Streaming data structure for chunk-based processing
 type FileChunk struct {
@@ -61,7 +72,7 @@ func (c *ChunkSizeCalculator) EstimateRowSize(specs []*spec.ColumnSpec) int {
 
 	// Add overhead for delimiters (CSV) or encoding (Parquet)
 	if c.cfg.Common.FileFormat == "csv" {
-		separator, endline := csvSeparatorAndEndline(c.cfg.CSV)
+		separator, endline := CSVSeparatorAndEndline(c.cfg.CSV)
 		delimiterOverhead := len(endline)
 		if len(specs) > 0 {
 			delimiterOverhead += (len(specs) - 1) * len(separator)
@@ -87,90 +98,4 @@ func (c *ChunkSizeCalculator) CalculateChunkSize(specs []*spec.ColumnSpec) int {
 	}
 
 	return max(targetSizeBytes/rowSize, 1)
-}
-
-// StreamingCoordinator manages lock-free streaming operations with paired goroutines
-type StreamingCoordinator struct {
-	store           storage.ExternalStorage
-	chunkCalculator ChunkCalculator
-}
-
-// NewStreamingCoordinator creates a new streaming coordinator
-func NewStreamingCoordinator(store storage.ExternalStorage, chunkCalculator ChunkCalculator) *StreamingCoordinator {
-	return &StreamingCoordinator{
-		store:           store,
-		chunkCalculator: chunkCalculator,
-	}
-}
-
-// CoordinateStreaming manages the complete streaming process with paired goroutines
-func (sc *StreamingCoordinator) CoordinateStreaming(
-	ctx context.Context, startNo, endNo int,
-	specs []*spec.ColumnSpec,
-	cfg config.Config,
-	generator DataGenerator,
-	progress *util.ProgressLogger,
-	threads int,
-) error {
-	// Create a cancellable context for all operations
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	var eg errgroup.Group
-	eg.SetLimit(threads)
-
-	// Create one generator-writer pair for each file
-	for i := startNo; i < endNo; i++ {
-		eg.Go(func() error {
-			writer, err := util.OpenWriter(ctx, &cfg, sc.store, i, progress)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			chunkChannel := make(chan *FileChunk, 4)
-
-			// Start writer goroutine for this file
-			var writerGroup errgroup.Group
-			writerGroup.Go(func() error {
-				defer writer.Close(ctx)
-				for chunk := range chunkChannel {
-					if len(chunk.Data) > 0 {
-						if _, err := writer.Write(ctx, chunk.Data); err != nil {
-							return errors.Trace(err)
-						}
-					}
-
-					if chunk.IsLast {
-						break
-					}
-				}
-
-				return nil
-			})
-
-			// Generate file in current goroutine, sending chunks to its writer
-			err = generator.GenerateFileStreaming(ctx, i, specs, cfg, chunkChannel)
-			close(chunkChannel)
-
-			if err != nil {
-				cancel()
-			}
-
-			// Wait for writer to finish
-			if writerErr := writerGroup.Wait(); writerErr != nil {
-				return writerErr
-			}
-
-			if err != nil {
-				return err
-			}
-
-			if progress != nil {
-				progress.UpdateFiles(1)
-			}
-			return nil
-		})
-	}
-
-	return errors.Trace(eg.Wait())
 }
