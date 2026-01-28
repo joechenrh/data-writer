@@ -57,7 +57,11 @@ type ParquetWriter struct {
 
 func (pw *ParquetWriter) getWriter(w io.Writer, dataPageSize int64, compression compress.Compression) (*file.Writer, error) {
 	fields := make([]schema.Node, pw.numCols)
-	opts := []parquet.WriterProperty{parquet.WithDataPageSize(dataPageSize)}
+	opts := []parquet.WriterProperty{
+		parquet.WithDataPageSize(dataPageSize),
+		parquet.WithDataPageVersion(parquet.DataPageV2),
+		parquet.WithVersion(parquet.V2_LATEST),
+	}
 	for i, spec := range pw.specs {
 		colName := spec.OrigName
 		fields[i], _ = schema.NewPrimitiveNodeConverted(
@@ -67,7 +71,11 @@ func (pw *ParquetWriter) getWriter(w io.Writer, dataPageSize int64, compression 
 			spec.TypeLen, spec.Precision, spec.Scale,
 			-1,
 		)
-		opts = append(opts, parquet.WithDictionaryFor(colName, true))
+		encoding, useDict := chooseParquetEncoding(spec)
+		opts = append(opts, parquet.WithDictionaryFor(colName, useDict))
+		if !useDict {
+			opts = append(opts, parquet.WithEncodingFor(colName, encoding))
+		}
 		opts = append(opts, parquet.WithCompressionFor(colName, compression))
 	}
 
@@ -77,6 +85,32 @@ func (pw *ParquetWriter) getWriter(w io.Writer, dataPageSize int64, compression 
 	}
 
 	return file.NewParquetWriter(w, node, file.WithWriterProps(parquet.NewWriterProperties(opts...))), nil
+}
+
+func chooseParquetEncoding(spec *ColumnSpec) (parquet.Encoding, bool) {
+	hasExplicitSet := len(spec.ValueSet) > 0 || len(spec.IntSet) > 0
+	if hasExplicitSet && !spec.IsUnique {
+		return parquet.Encodings.Plain, true
+	}
+
+	switch spec.Type {
+	case parquet.Types.Int32, parquet.Types.Int64:
+		if spec.Order == NumericTotalOrder || spec.Order == NumericPartialOrder {
+			return parquet.Encodings.DeltaBinaryPacked, false
+		}
+		return parquet.Encodings.Plain, false
+	case parquet.Types.Float, parquet.Types.Double:
+		return parquet.Encodings.ByteStreamSplit, false
+	case parquet.Types.FixedLenByteArray:
+		return parquet.Encodings.ByteStreamSplit, false
+	case parquet.Types.ByteArray:
+		if spec.IsUnique {
+			return parquet.Encodings.Plain, false
+		}
+		return parquet.Encodings.DeltaLengthByteArray, false
+	default:
+		return parquet.Encodings.Plain, false
+	}
 }
 
 func getParquetCompressionCodec(name string) (compress.Compression, error) {
