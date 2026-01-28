@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/cznic/mathutil"
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/pkg/util/hack"
 )
@@ -52,16 +53,12 @@ func (c *ColumnSpec) generateGaussianInt(rng *rand.Rand) int {
 	lower := 0
 	upper := 1<<c.TypeLen - 1
 	if c.Signed {
-		lower -= (1 << (c.TypeLen - 1))
-		upper -= (1 << (c.TypeLen - 1))
+		shift := 1 << (c.TypeLen - 1)
+		lower -= shift
+		upper -= shift
 	}
 
-	if randomInt > upper {
-		randomInt = upper
-	} else if randomInt < lower {
-		randomInt = lower
-	}
-	return randomInt
+	return mathutil.Clamp(randomInt, lower, upper)
 }
 
 func (c *ColumnSpec) generateRandomInt(rng *rand.Rand) int {
@@ -228,7 +225,7 @@ func (c *ColumnSpec) generateDecimalFixedLenParquet(_ int, out []parquet.FixedLe
 		if len(c.IntSet) > 0 {
 			out[i] = fixedLenDecimalFromInt64(c.IntSet[rng.Intn(len(c.IntSet))], c.TypeLen)
 		} else {
-			out[i] = generateFixedLenDecimalBytes(c.Precision, c.TypeLen, rng)
+			out[i] = generateDecimalBytes(c.TypeLen, rng)
 		}
 	}
 }
@@ -278,7 +275,6 @@ func fixedLenDecimalFromInt64(unscaled int64, byteLen int) parquet.FixedLenByteA
 	copy(padded[byteLen-len(b):], b)
 
 	if unscaled < 0 {
-		// Sign-extend for negative values.
 		for i := 0; i < byteLen-len(b); i++ {
 			padded[i] = 0xFF
 		}
@@ -287,22 +283,14 @@ func fixedLenDecimalFromInt64(unscaled int64, byteLen int) parquet.FixedLenByteA
 	return padded
 }
 
-func generateFixedLenDecimalBytes(precision, byteLen int, rng *rand.Rand) parquet.FixedLenByteArray {
-	limit := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(precision)), nil)
-	buf := make([]byte, byteLen+1)
-	rng.Read(buf)
-
-	v := new(big.Int).SetBytes(buf)
-	v.Mod(v, limit)
-
-	b := v.Bytes()
-	if len(b) > byteLen {
-		b = b[len(b)-byteLen:]
-	}
-
-	padded := make([]byte, byteLen)
-	copy(padded[byteLen-len(b):], b)
-	return padded
+// generateDecimalBytes generates a fixed-length byte array for a decimal value.
+// Currently, we don't take precision into consideration and just fill with
+// random bytes.
+func generateDecimalBytes(byteLen int, rng *rand.Rand) parquet.FixedLenByteArray {
+	buf := make([]byte, byteLen)
+	fillLength := min(byteLen, 32)
+	rng.Read(buf[fillLength:])
+	return buf
 }
 
 func (c *ColumnSpec) generateInt32Parquet(rowID int, out []int32, defLevel []int16, rng *rand.Rand) {
@@ -361,7 +349,8 @@ func (c *ColumnSpec) generateTimestampParquet(out []int64, defLevel []int16, rng
 			defLevel[i] = 0
 		} else {
 			defLevel[i] = 1
-			out[i] = rng.Int63() % 1576800000000000 // Random timestamp in the range of 0 to 50 years
+			// Random timestamp in the range of 0 to 50 years
+			out[i] = rng.Int63() % 1576800000000000
 		}
 	}
 }
