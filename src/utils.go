@@ -4,17 +4,41 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/big"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sync/atomic"
 	"time"
 
+	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/schollz/progressbar/v3"
 	"golang.org/x/sync/errgroup"
 )
+
+func deduceTypeForDecimal(precision int) (parquet.Type, int) {
+	if precision <= 9 {
+		return parquet.Types.Int32, 0
+	}
+	if precision <= 18 {
+		return parquet.Types.Int64, 0
+	}
+
+	bits := decimalMaxDigitsBits(precision) + 1
+	byteLen := (bits + 7) / 8
+	return parquet.Types.FixedLenByteArray, byteLen
+}
+
+func decimalMaxDigitsBits(precision int) int {
+	if precision <= 0 {
+		return 0
+	}
+	pow10 := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(precision)), nil)
+	pow10.Sub(pow10, big.NewInt(1))
+	return pow10.BitLen()
+}
 
 func DeleteAllFiles(cfg Config) error {
 	var fileNames []string

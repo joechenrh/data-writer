@@ -5,9 +5,9 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"time"
-
 	"math/rand"
+	"strings"
+	"time"
 
 	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/compress"
@@ -55,7 +55,7 @@ type ParquetWriter struct {
 	buffer *memory.Buffer
 }
 
-func (pw *ParquetWriter) getWriter(w io.Writer, dataPageSize int64) (*file.Writer, error) {
+func (pw *ParquetWriter) getWriter(w io.Writer, dataPageSize int64, compression compress.Compression) (*file.Writer, error) {
 	fields := make([]schema.Node, pw.numCols)
 	opts := []parquet.WriterProperty{parquet.WithDataPageSize(dataPageSize)}
 	for i, spec := range pw.specs {
@@ -68,7 +68,7 @@ func (pw *ParquetWriter) getWriter(w io.Writer, dataPageSize int64) (*file.Write
 			-1,
 		)
 		opts = append(opts, parquet.WithDictionaryFor(colName, true))
-		opts = append(opts, parquet.WithCompressionFor(colName, compress.Codecs.Snappy))
+		opts = append(opts, parquet.WithCompressionFor(colName, compression))
 	}
 
 	node, err := schema.NewGroupNode("schema", parquet.Repetitions.Required, fields, -1)
@@ -79,7 +79,26 @@ func (pw *ParquetWriter) getWriter(w io.Writer, dataPageSize int64) (*file.Write
 	return file.NewParquetWriter(w, node, file.WithWriterProps(parquet.NewWriterProperties(opts...))), nil
 }
 
-func (pw *ParquetWriter) Init(w io.Writer, rows, rowGroups int, dataPageSize int64, specs []*ColumnSpec) error {
+func getParquetCompressionCodec(name string) (compress.Compression, error) {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "snappy":
+		return compress.Codecs.Snappy, nil
+	case "zstd":
+		return compress.Codecs.Zstd, nil
+	case "gzip":
+		return compress.Codecs.Gzip, nil
+	case "brotli":
+		return compress.Codecs.Brotli, nil
+	case "lz4_raw", "lz4":
+		return compress.Codecs.Lz4Raw, nil
+	case "uncompressed", "none":
+		return compress.Codecs.Uncompressed, nil
+	default:
+		return compress.Codecs.Uncompressed, fmt.Errorf("unsupported parquet compression: %q", name)
+	}
+}
+
+func (pw *ParquetWriter) Init(w io.Writer, rows, rowGroups int, dataPageSize int64, specs []*ColumnSpec, compression compress.Compression) error {
 	source := rand.NewSource(time.Now().UnixNano() + int64(rand.Intn(65536)))
 	pw.rng = rand.New(source)
 
@@ -97,7 +116,7 @@ func (pw *ParquetWriter) Init(w io.Writer, rows, rowGroups int, dataPageSize int
 	pw.defLevels = make([][]int16, len(specs))
 	pw.valueBufs = make([]any, len(specs))
 	pw.buffer = memory.NewResizableBuffer(memory.DefaultAllocator)
-	pw.w, err = pw.getWriter(w, dataPageSize)
+	pw.w, err = pw.getWriter(w, dataPageSize, compression)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -109,6 +128,8 @@ func (pw *ParquetWriter) Init(w io.Writer, rows, rowGroups int, dataPageSize int
 			pw.valueBufs[i] = make([]int32, BatchSize)
 		case parquet.Types.Int64:
 			pw.valueBufs[i] = make([]int64, BatchSize)
+		case parquet.Types.FixedLenByteArray:
+			pw.valueBufs[i] = make([]parquet.FixedLenByteArray, BatchSize)
 		case parquet.Types.Double:
 			pw.valueBufs[i] = make([]float64, BatchSize)
 		case parquet.Types.Float:
@@ -146,7 +167,27 @@ func (pw *ParquetWriter) writeNextColumn(rgw file.SerialRowGroupWriter, rowIDSta
 
 	for range rounds {
 		switch spec.SQLType {
-		case "bigint", "decimal":
+		case "decimal":
+			switch spec.Type {
+			case parquet.Types.Int32:
+				buf := valueBuffer.([]int32)
+				spec.generateDecimalInt32Parquet(rowIDStart, buf, defLevels, pw.rng)
+				w, _ := cw.(*file.Int32ColumnChunkWriter)
+				num, err = w.WriteBatch(buf, defLevels, nil)
+			case parquet.Types.Int64:
+				buf := valueBuffer.([]int64)
+				spec.generateDecimalInt64Parquet(rowIDStart, buf, defLevels, pw.rng)
+				w, _ := cw.(*file.Int64ColumnChunkWriter)
+				num, err = w.WriteBatch(buf, defLevels, nil)
+			case parquet.Types.FixedLenByteArray:
+				buf := valueBuffer.([]parquet.FixedLenByteArray)
+				spec.generateDecimalFixedLenParquet(rowIDStart, buf, defLevels, pw.rng)
+				w, _ := cw.(*file.FixedLenByteArrayColumnChunkWriter)
+				num, err = w.WriteBatch(buf, defLevels, nil)
+			default:
+				return 0, errors.Errorf("unsupported decimal parquet type: %v", spec.Type)
+			}
+		case "bigint":
 			buf := valueBuffer.([]int64)
 			spec.generateInt64Parquet(rowIDStart, buf, defLevels, pw.rng)
 			w, _ := cw.(*file.Int64ColumnChunkWriter)
@@ -269,7 +310,12 @@ func generateParquetCommon(
 		return fmt.Errorf("numRows %d is not divisible by numRowGroups %d", numRows, rowGroups)
 	}
 
-	if err := pw.Init(wrapper, numRows, rowGroups, int64(cfg.Parquet.PageSizeKB)<<10, specs); err != nil {
+	codec, err := getParquetCompressionCodec(cfg.Parquet.Compression)
+	if err != nil {
+		return err
+	}
+
+	if err := pw.Init(wrapper, numRows, rowGroups, int64(cfg.Parquet.PageSizeKB)<<10, specs, codec); err != nil {
 		return errors.Trace(err)
 	}
 	if err := pw.Write(startRowID); err != nil {

@@ -122,7 +122,6 @@ func (g *CSVGenerator) generateCSVFileStreaming(
 			IsLast: rowOffset+actualChunkRows >= totalRows,
 		}
 
-		// Use context-aware channel send instead of returning error on full channel
 		select {
 		case chunkChannel <- chunk:
 		case <-ctx.Done():

@@ -1,13 +1,16 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
 
 	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/schema"
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -47,23 +50,81 @@ type ColumnSpec struct {
 
 	// Below are used for generate specified data
 	NullPercent int
+	ValueSet    []string
+	IntSet      []int64
 	IsUnique    bool
 	Order       NumericOrder
 	Mean        int
 	StdDev      int
 	Signed      bool
+	Compress    int
+}
+
+func splitCommentOpts(comment string) ([]string, error) {
+	var (
+		opts         []string
+		start        int
+		bracketDepth int
+		inQuotes     bool
+	)
+
+	for i := range comment {
+		switch comment[i] {
+		case '"':
+			inQuotes = !inQuotes
+		case '[':
+			if !inQuotes {
+				bracketDepth++
+			}
+		case ']':
+			if !inQuotes {
+				bracketDepth--
+				if bracketDepth < 0 {
+					return nil, fmt.Errorf("malformed comment: %q", comment)
+				}
+			}
+		case ',':
+			if !inQuotes && bracketDepth == 0 {
+				opt := comment[start:i]
+				if opt != "" {
+					opts = append(opts, opt)
+				}
+				start = i + 1
+			}
+		}
+	}
+
+	if inQuotes || bracketDepth != 0 {
+		return nil, fmt.Errorf("malformed comment: %q", comment)
+	}
+
+	if start < len(comment) {
+		opt := comment[start:]
+		if opt != "" {
+			opts = append(opts, opt)
+		}
+	}
+
+	return opts, nil
 }
 
 // parseComment parse the comment string and set the corresponding fields in ColumnSpec
-func (c *ColumnSpec) parseComment(comment string) {
+func (c *ColumnSpec) parseComment(comment string) error {
+	comment = strings.ReplaceAll(comment, " ", "")
 	if comment == "" {
-		return
+		return nil
 	}
 
-	comment = strings.ReplaceAll(comment, " ", "")
-	opts := strings.Split(comment, ",")
+	opts, err := splitCommentOpts(comment)
+	if err != nil {
+		return err
+	}
+
 	for _, opt := range opts {
-		s := strings.Split(opt, "=")
+		s := strings.SplitN(opt, "=", 2)
+		if len(s) != 2 {
+			return fmt.Errorf("malformed comment option: %q", opt)
+		}
 		k, v := s[0], s[1]
 		switch k {
 		case "null_percent":
@@ -76,6 +137,24 @@ func (c *ColumnSpec) parseComment(comment string) {
 			c.Mean, _ = strconv.Atoi(v)
 		case "stddev":
 			c.StdDev, _ = strconv.Atoi(v)
+		case "compress":
+			compress, err := strconv.Atoi(v)
+			if err != nil {
+				return fmt.Errorf("invalid compress for column %s: %q", c.OrigName, v)
+			}
+			c.Compress = mathutil.Clamp(compress, 1, 100)
+		case "set":
+			var stringValues []string
+			if err := json.Unmarshal([]byte(v), &stringValues); err == nil {
+				c.ValueSet = stringValues
+				continue
+			}
+			var intValues []int64
+			if err := json.Unmarshal([]byte(v), &intValues); err == nil {
+				c.IntSet = intValues
+				continue
+			}
+			return fmt.Errorf("invalid set for column %s: %q", c.OrigName, v)
 		case "order":
 			switch v {
 			case "total_order":
@@ -87,6 +166,7 @@ func (c *ColumnSpec) parseComment(comment string) {
 			}
 		}
 	}
+	return nil
 }
 
 var DefaultSpecs = map[byte]*ColumnSpec{
@@ -178,13 +258,31 @@ var DefaultSpecs = map[byte]*ColumnSpec{
 		TypeLen:   64,
 	},
 	mysql.TypeBlob: {
-		SQLType:   "blob",
+		SQLType:   "char",
 		Type:      parquet.Types.ByteArray,
 		Converted: schema.ConvertedTypes.None,
 		TypeLen:   64,
 	},
 	mysql.TypeTinyBlob: {
 		SQLType:   "tinyblob",
+		Type:      parquet.Types.ByteArray,
+		Converted: schema.ConvertedTypes.None,
+		TypeLen:   64,
+	},
+	mysql.TypeLongBlob: {
+		SQLType:   "char",
+		Type:      parquet.Types.ByteArray,
+		Converted: schema.ConvertedTypes.None,
+		TypeLen:   64,
+	},
+	mysql.TypeMediumBlob: {
+		SQLType:   "char",
+		Type:      parquet.Types.ByteArray,
+		Converted: schema.ConvertedTypes.None,
+		TypeLen:   64,
+	},
+	mysql.TypeVarString: {
+		SQLType:   "char",
 		Type:      parquet.Types.ByteArray,
 		Converted: schema.ConvertedTypes.None,
 		TypeLen:   64,
@@ -242,6 +340,10 @@ func (c *ColumnSpec) String() string {
 
 	if c.StdDev != 0 {
 		builder.WriteString(", StdDev: " + strconv.Itoa(c.StdDev))
+	}
+
+	if c.Compress > 0 {
+		builder.WriteString(", Compress: " + strconv.Itoa(c.Compress))
 	}
 
 	if c.Precision > 0 {
@@ -333,17 +435,27 @@ func getSpecFromSQL(sqlPath string) ([]*ColumnSpec, error) {
 		}
 		spec = spec.Clone()
 		spec.OrigName = col.Name.L
+		spec.Compress = 100 // default no compression for data generation
 
 		col.FieldType.AddFlag(mysql.PriKeyFlag | mysql.UniqueKeyFlag)
 		if !types.IsTypeNumeric(col.GetType()) && col.GetFlen() > 0 {
-			spec.TypeLen = col.GetFlen()
+			spec.TypeLen = min(col.GetFlen(), 64)
 		}
 		if col.GetType() == mysql.TypeNewDecimal {
 			spec.Precision = col.FieldType.GetFlen()
 			spec.Scale = col.FieldType.GetDecimal()
+			if spec.Precision == 0 {
+				return nil, errors.New("unsupported decimal precision=0 for column: " + spec.OrigName)
+			}
+			if spec.Scale < 0 || spec.Scale > spec.Precision {
+				return nil, errors.New("invalid decimal scale for column: " + spec.OrigName)
+			}
+			spec.Type, spec.TypeLen = deduceTypeForDecimal(spec.Precision)
 		}
 		if col.Comment != "" {
-			spec.parseComment(col.Comment)
+			if err := spec.parseComment(col.Comment); err != nil {
+				return nil, err
+			}
 		}
 
 		if spec.MinLen == 0 {

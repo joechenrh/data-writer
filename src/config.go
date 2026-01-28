@@ -33,8 +33,9 @@ type CommonConfig struct {
 }
 
 type ParquetConfig struct {
-	PageSizeKB   int64 `toml:"page_size_kb"`
-	NumRowGroups int   `toml:"row_groups"`
+	PageSizeKB   int64  `toml:"page_size_kb"`
+	NumRowGroups int    `toml:"row_groups"`
+	Compression  string `toml:"compression"`
 }
 
 type CSVConfig struct {

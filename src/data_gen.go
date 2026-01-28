@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"math/big"
 	"math/rand"
 	"time"
 
@@ -11,6 +12,19 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/pkg/util/hack"
 )
+
+func generateStringWithCompress(b []byte, length int, compress int, rng *rand.Rand) {
+	nonduplicateLength := length * compress / 100
+	rng.Read(b[:nonduplicateLength])
+	for i := range b[:nonduplicateLength] {
+		b[i] = validChar[int(b[i])%len(validChar)]
+	}
+
+	// The rest part is filled with duplicate 'a' to simulate compression
+	for i := nonduplicateLength; i < length; i++ {
+		b[i] = 'a'
+	}
+}
 
 func (c *ColumnSpec) generatePartialOrderInt(rowID int) int {
 	randPrefix := (rowID * 1000000007) & 31
@@ -54,6 +68,9 @@ func (c *ColumnSpec) generateRandomInt(rng *rand.Rand) int {
 }
 
 func (c *ColumnSpec) generateInt(rowID int, rng *rand.Rand) int {
+	if len(c.IntSet) > 0 {
+		return int(c.IntSet[rng.Intn(len(c.IntSet))])
+	}
 	if c.StdDev > 0 {
 		return c.generateGaussianInt(rng)
 	}
@@ -96,6 +113,9 @@ func (c *ColumnSpec) generateBatchNull(length int, rng *rand.Rand) []bool {
 }
 
 func (c *ColumnSpec) generateString(rng *rand.Rand) string {
+	if len(c.ValueSet) > 0 {
+		return c.ValueSet[rng.Intn(len(c.ValueSet))]
+	}
 	if c.IsUnique {
 		return uuid.New().String()
 	}
@@ -105,16 +125,12 @@ func (c *ColumnSpec) generateString(rng *rand.Rand) string {
 	length := rng.Intn(upper-lower+1) + lower
 
 	b := make([]byte, length)
-	rng.Read(b)
-	for i := range b {
-		b[i] = validChar[int(b[i])%len(validChar)]
-	}
-
+	generateStringWithCompress(b, length, c.Compress, rng)
 	return string(hack.String(b))
 }
 
 // TODO(joechenrh): implement a real JSON generator
-func (c *ColumnSpec) generateJSON(rng *rand.Rand) string {
+func (c *ColumnSpec) generateJSON(_ *rand.Rand) string {
 	return "[1,2,3,4,5]"
 }
 
@@ -166,6 +182,118 @@ func (c *ColumnSpec) generateInt64Parquet(rowID int, out []int64, defLevel []int
 			out[i] = int64(c.generateInt(rowID+i, rng))
 		}
 	}
+}
+
+func (c *ColumnSpec) generateDecimalInt32Parquet(_ int, out []int32, defLevel []int16, rng *rand.Rand) {
+	unscaled := c.generateDecimalInt64Batch(len(out), rng)
+	for i := range len(out) {
+		if unscaled[i] < 0 {
+			defLevel[i] = 0
+			continue
+		}
+		defLevel[i] = 1
+		out[i] = int32(unscaled[i])
+	}
+}
+
+func (c *ColumnSpec) generateDecimalInt64Parquet(_ int, out []int64, defLevel []int16, rng *rand.Rand) {
+	unscaled := c.generateDecimalInt64Batch(len(out), rng)
+	for i := range len(out) {
+		if unscaled[i] < 0 {
+			defLevel[i] = 0
+			continue
+		}
+		defLevel[i] = 1
+		out[i] = unscaled[i]
+	}
+}
+
+func (c *ColumnSpec) generateDecimalFixedLenParquet(_ int, out []parquet.FixedLenByteArray, defLevel []int16, rng *rand.Rand) {
+	nullMap := c.generateBatchNull(len(out), rng)
+	for i := range len(out) {
+		if nullMap[i] {
+			defLevel[i] = 0
+			continue
+		}
+		defLevel[i] = 1
+		if len(c.IntSet) > 0 {
+			out[i] = fixedLenDecimalFromInt64(c.IntSet[rng.Intn(len(c.IntSet))], c.TypeLen)
+		} else {
+			out[i] = generateFixedLenDecimalBytes(c.Precision, c.TypeLen, rng)
+		}
+	}
+}
+
+func (c *ColumnSpec) generateDecimalInt64Batch(batch int, rng *rand.Rand) []int64 {
+	nullMap := c.generateBatchNull(batch, rng)
+	out := make([]int64, batch)
+
+	if len(c.IntSet) > 0 {
+		for i := range batch {
+			if nullMap[i] {
+				out[i] = -1
+				continue
+			}
+			out[i] = c.IntSet[rng.Intn(len(c.IntSet))]
+		}
+		return out
+	}
+
+	limit := pow10Int64(c.Precision)
+	for i := range batch {
+		if nullMap[i] {
+			out[i] = -1
+			continue
+		}
+		out[i] = rng.Int63n(limit)
+	}
+	return out
+}
+
+func pow10Int64(p int) int64 {
+	res := int64(1)
+	for range p {
+		res *= 10
+	}
+	return res
+}
+
+func fixedLenDecimalFromInt64(unscaled int64, byteLen int) parquet.FixedLenByteArray {
+	// Parquet DECIMAL in fixed-len byte array: two's-complement big-endian.
+	v := big.NewInt(unscaled)
+	b := v.Bytes()
+	if len(b) > byteLen {
+		b = b[len(b)-byteLen:]
+	}
+	padded := make([]byte, byteLen)
+	copy(padded[byteLen-len(b):], b)
+
+	if unscaled < 0 {
+		// Sign-extend for negative values.
+		for i := 0; i < byteLen-len(b); i++ {
+			padded[i] = 0xFF
+		}
+	}
+
+	return padded
+}
+
+func generateFixedLenDecimalBytes(precision, byteLen int, rng *rand.Rand) parquet.FixedLenByteArray {
+	limit := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(precision)), nil)
+	buf := make([]byte, byteLen+1)
+	rng.Read(buf)
+
+	v := new(big.Int).SetBytes(buf)
+	v.Mod(v, limit)
+
+	b := v.Bytes()
+	if len(b) > byteLen {
+		b = b[len(b)-byteLen:]
+	}
+
+	padded := make([]byte, byteLen)
+	copy(padded[byteLen-len(b):], b)
+	return padded
 }
 
 func (c *ColumnSpec) generateInt32Parquet(rowID int, out []int32, defLevel []int16, rng *rand.Rand) {
@@ -256,14 +384,25 @@ func (c *ColumnSpec) generateJSONParquet(_ int, out []parquet.ByteArray, defLeve
 func (c *ColumnSpec) generateStringParquet(_ int, out []parquet.ByteArray, defLevel []int16, rng *rand.Rand) {
 	nullMap := c.generateBatchNull(len(out), rng)
 
+	if len(c.ValueSet) > 0 {
+		for i := range len(out) {
+			if nullMap[i] {
+				defLevel[i] = 0
+				continue
+			}
+			defLevel[i] = 1
+			out[i] = []byte(c.ValueSet[rng.Intn(len(c.ValueSet))])
+		}
+		return
+	}
+
 	lower := c.MinLen
 	upper := c.TypeLen
 	slen := rng.Intn(upper-lower+1) + lower
 
 	buf := make([]byte, slen*len(out))
-	rng.Read(buf)
-	for i := range buf {
-		buf[i] = validChar[int(buf[i])%len(validChar)]
+	for i := range out {
+		generateStringWithCompress(buf[slen*i:slen*i+slen], slen, c.Compress, rng)
 	}
 
 	for i := range len(out) {
