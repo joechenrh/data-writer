@@ -18,7 +18,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/schollz/progressbar/v3"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -67,7 +66,7 @@ func ShowFiles(cfg config.Config) error {
 }
 
 func showProcess(totalFiles int) *util.ProgressLogger {
-	return util.NewProgressLogger(totalFiles, "written", 5*time.Second)
+	return util.NewProgressLogger(totalFiles, "writing", time.Second)
 }
 
 func GenerateFiles(cfg config.Config) error {
@@ -110,8 +109,10 @@ func generateFilesDirect(cfg config.Config, generator writer.DataGenerator) erro
 	}
 	ctx := context.Background()
 
-	fmt.Println("Specs: ", specs)
-	fmt.Println("Generating files (direct mode)... ")
+	fmt.Print("Generating files (streaming mode)\n")
+	for _, spec := range specs {
+		fmt.Println(spec.String())
+	}
 
 	eg, _ := errgroup.WithContext(ctx)
 	eg.SetLimit(*threads)
@@ -158,7 +159,10 @@ func generateFilesStreaming(cfg config.Config, generator writer.DataGenerator) e
 	}
 	ctx := context.Background()
 
-	fmt.Print("Generating files (streaming mode)... ", specs)
+	fmt.Print("Generating files (streaming mode)\n")
+	for _, spec := range specs {
+		fmt.Println(spec.String())
+	}
 
 	startNo, endNo := cfg.Common.StartFileNo, cfg.Common.EndFileNo
 	totalFiles := endNo - startNo
@@ -166,11 +170,6 @@ func generateFilesStreaming(cfg config.Config, generator writer.DataGenerator) e
 
 	// Initialize chunk calculator with configurable size
 	chunkCalculator := writer.NewChunkSizeCalculator(&cfg)
-
-	// Log the calculated chunk parameters for visibility
-	estimatedRowSize := chunkCalculator.EstimateRowSize(specs)
-	chunkRows := chunkCalculator.CalculateChunkSize(specs)
-	fmt.Printf("Estimated row size: %d bytes, chunk size: %d rows\n", estimatedRowSize, chunkRows)
 
 	// Create streaming coordinator and let it handle all concurrency
 	coordinator := writer.NewStreamingCoordinator(store, chunkCalculator)
@@ -236,16 +235,19 @@ func UploadLocalFiles(cfg config.Config, localDir string) error {
 	// Progress tracking
 	var uploadedFiles atomic.Int32
 	go func() {
-		bar := progressbar.Default(int64(len(filesToUpload)))
-		ticker := time.NewTicker(2 * time.Second)
+		bar := util.NewFileProgressBar(len(filesToUpload), "uploading")
+		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
 
 		var prev int
 		for range ticker.C {
 			cur := int(uploadedFiles.Load())
-			bar.Add(cur - prev)
-			prev = cur
+			if cur > prev {
+				_ = bar.Add(cur - prev)
+				prev = cur
+			}
 			if cur >= len(filesToUpload) {
+				_ = bar.Finish()
 				break
 			}
 		}
