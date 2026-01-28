@@ -2,8 +2,9 @@ package util
 
 import (
 	"context"
-	"dataWriter/src/config"
 	"fmt"
+
+	"dataWriter/src/config"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -36,8 +37,9 @@ func OpenWriter(
 ) (*writerWithStats, error) {
 	fileName := fmt.Sprintf("%s.%d.%s", cfg.Common.Prefix, fileID, cfg.FileSuffix)
 	if cfg.Common.Folders > 1 {
-		fileName = fmt.Sprintf("part%d/%s.%d.%s",
-			fileID%cfg.Common.Folders, cfg.Common.Prefix, fileID, cfg.FileSuffix)
+		folderID := fileID % cfg.Common.Folders
+		fileName = fmt.Sprintf("part%05d/%s.%d.%s",
+			folderID, cfg.Common.Prefix, fileID, cfg.FileSuffix)
 	}
 
 	writer, err := store.Create(ctx, fileName, &storage.WriterOption{
