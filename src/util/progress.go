@@ -67,6 +67,11 @@ func (p *ProgressLogger) UpdateFiles(delta int32) {
 	p.files.Add(delta)
 }
 
+// Snapshot returns the current file and byte counts.
+func (p *ProgressLogger) Snapshot() (int64, int64) {
+	return int64(p.files.Load()), p.bytes.Load()
+}
+
 func (p *ProgressLogger) start() {
 	if p.totalFiles <= 0 {
 		return
