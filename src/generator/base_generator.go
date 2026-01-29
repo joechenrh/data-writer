@@ -47,6 +47,10 @@ func NewOrchestrator(cfg *config.Config, sqlPath string) (*Orchestrator, error) 
 		"writing",
 		time.Second,
 	)
+	logger.SetContext(
+		strings.ToLower(cfg.Common.FileFormat),
+		resolvePlatform(cfg),
+	)
 
 	return &Orchestrator{
 		FileGenerator: gen,
@@ -66,6 +70,17 @@ func newGenerator(cfg *config.Config, specs []*spec.ColumnSpec) (FileGenerator, 
 	default:
 		return nil, errors.Errorf("unsupported file format: %s", cfg.Common.FileFormat)
 	}
+}
+
+func resolvePlatform(cfg *config.Config) string {
+	path := strings.ToLower(cfg.Common.Path)
+	if cfg.S3Config != nil || strings.HasPrefix(path, "s3://") {
+		return "s3"
+	}
+	if cfg.GCSConfig != nil || strings.HasPrefix(path, "gcs://") {
+		return "gcs"
+	}
+	return "local"
 }
 
 func (o *Orchestrator) openWriter(

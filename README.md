@@ -9,12 +9,18 @@ This tool can generate data and write directly into S3(GCS, AWS S3, KS3, etc.).
 ### 1. Create - Generate and upload data
 ```bash
 ./bin/data-writer -op create -cfg config.toml -sql schema.sql -threads 16
+
+╭────────────────────────────────────────────────────────────────────────────────────────────╮
+│  99% ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╸━              Format: csv                           │
+│ writing 118GiB (368.5MiB/s, 3.00 files/s)            Platform: s3                          │
+╰────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
 Preview schema specs (with comments applied):
 ```bash
 ./bin/data-writer -show-spec -cfg config.toml -sql schema.sql
 ```
+
 
 ### 2. Upload - Upload existing local files to remote storage
 ```bash
