@@ -103,7 +103,7 @@ Supported options:
 - `stddev`: Standard deviation for numeric distributions.
 - `compress`: Compression ratio hint (1-100).
 - `set`: JSON array of allowed values, e.g. `set=["a","b"]` or `set=[1,2,3]`.
-- `order`: `total_order`, `partial_order`, or `random_order` for numeric ordering.
+- `order`: `total_order`, `partial_order`, or `random_order` for integer ordering.
 
 ## Speed
 
