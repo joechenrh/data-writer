@@ -195,11 +195,13 @@ func (o *Orchestrator) Run(streaming bool, threads int) error {
 	}
 
 	if err := eg.Wait(); err != nil {
+		fmt.Println()
 		fmt.Printf("Generate and upload failed after %s\n", time.Since(start))
 		return errors.Trace(err)
 	}
 
 	elapsed := time.Since(start)
+	fmt.Println()
 	fmt.Printf("Generate and upload took %s\n", elapsed)
 	o.printSummary(elapsed)
 	return nil
