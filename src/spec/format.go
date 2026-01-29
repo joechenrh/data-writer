@@ -31,11 +31,21 @@ func FormatSpecsTable(specs []*ColumnSpec) string {
 	var buf bytes.Buffer
 	w := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
 
-	fmt.Fprintln(w, "Name\tType\tNull%\tUnique\tOrder\tSet")
+	fmt.Fprintln(w, "Name\tType\tMinLen\tMaxLen\tNull%\tUnique\tOrder\tSet")
 	for _, c := range specs {
 		nullPercent := "-"
 		if c.NullPercent > 0 {
 			nullPercent = strconv.Itoa(c.NullPercent)
+		}
+
+		minLen := "-"
+		if c.MinLen > 0 {
+			minLen = strconv.Itoa(c.MinLen)
+		}
+
+		maxLen := "-"
+		if c.TypeLen > 0 {
+			maxLen = strconv.Itoa(c.TypeLen)
 		}
 
 		unique := "-"
@@ -64,9 +74,11 @@ func FormatSpecsTable(specs []*ColumnSpec) string {
 			set = strings.Join(vals, "|")
 		}
 
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			c.OrigName,
 			c.DisplaySQLType(),
+			minLen,
+			maxLen,
 			nullPercent,
 			unique,
 			order,
