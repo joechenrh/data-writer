@@ -75,6 +75,27 @@ Notes:
 - `common.chunk_size_kb` affects streaming: CSV uses it as a target chunk size; Parquet uses it as the raw chunk size (default 8 MiB).
 - `parquet.compression` supports `snappy`, `zstd`, `gzip`, `brotli`, `lz4`, and `none`.
 
+## Column Comment Options
+
+You can customize data generation per column using SQL column comments:
+
+```sql
+`c` char(120) NOT NULL DEFAULT '' COMMENT 'max_length=120, min_length=120',
+`text_0` text DEFAULT NULL COMMENT 'max_length=20000, min_length=20000, compress=40',
+`status` varchar(8) COMMENT 'set=["ok","warn","fail"]',
+`score` int COMMENT 'order=total_order, mean=100, stddev=15'
+```
+
+Supported options:
+- `null_percent`: Percentage of NULL values to generate.
+- `max_length`: Maximum length for string types.
+- `min_length`: Minimum length for string types.
+- `mean`: Mean for numeric distributions.
+- `stddev`: Standard deviation for numeric distributions.
+- `compress`: Compression ratio hint (1-100).
+- `set`: JSON array of allowed values, e.g. `set=["a","b"]` or `set=[1,2,3]`.
+- `order`: `total_order`, `partial_order`, or `random_order` for numeric ordering.
+
 ## Speed
 
 Test with the following schema with 16 threads:
