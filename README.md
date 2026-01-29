@@ -42,11 +42,11 @@ rows = 60000
 format = "csv"          # csv or parquet (case-insensitive)
 folders = 0             # <=1 means no subfolders
 use_streaming_mode = true
-chunk_size_kb = 64       # streaming only
+chunk_size = "16MiB"     # optional, streaming only
 
 [parquet]
 row_groups = 1
-page_size_kb = 1024
+page_size = "1MiB"
 compression = "zstd"
 
 [csv]
@@ -72,7 +72,8 @@ Notes:
 - `common.path` points to the target storage location (local path or `s3://`/`gcs://`).
 - `common.start_fileno` and `common.end_fileno` define a half-open range `[start, end)`.
 - `common.folders` splits output into `part%05d/` subfolders when > 1.
-- `common.chunk_size_kb` affects streaming: CSV uses it as a target chunk size; Parquet uses it as the raw chunk size (default 8 MiB).
+- `common.chunk_size` accepts human-readable sizes like `16MiB`. CSV uses it as a target chunk size; Parquet uses it as the raw chunk size (default 8 MiB).
+- `parquet.page_size` accepts human-readable sizes like `1MiB` (default 1 MiB).
 - `parquet.compression` supports `snappy`, `zstd`, `gzip`, `brotli`, `lz4`, and `none`.
 
 ## Column Comment Options

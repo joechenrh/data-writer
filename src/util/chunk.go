@@ -10,6 +10,7 @@ import (
 const (
 	defaultCSVSeparator = ","
 	defaultCSVEndLine   = "\n"
+	defaultChunkSize    = 32 * units.KiB
 )
 
 func CSVSeparatorAndEndline(cfg config.CSVConfig) (string, string) {
@@ -98,9 +99,9 @@ func (c *chunkCalculator) CalculateChunkSize(specs []*spec.ColumnSpec) int {
 		rowSize = 100 // Fallback
 	}
 
-	targetSizeBytes := c.cfg.Common.ChunkSizeKB * 1024
+	targetSizeBytes := c.cfg.Common.ChunkSizeBytes
 	if targetSizeBytes == 0 {
-		targetSizeBytes = 32 * units.KiB // Default 32KB
+		targetSizeBytes = defaultChunkSize
 	}
 
 	return max(targetSizeBytes/rowSize, 1)

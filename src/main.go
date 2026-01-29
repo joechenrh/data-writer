@@ -45,6 +45,9 @@ func main() {
 
 	var cfg config.Config
 	toml.DecodeFile(*cfgPath, &cfg)
+	if err := config.Normalize(&cfg); err != nil {
+		log.Fatalf("Invalid config: %v", err)
+	}
 
 	switch strings.ToLower(*operation) {
 	case "delete":

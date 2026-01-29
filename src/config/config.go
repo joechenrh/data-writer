@@ -2,9 +2,13 @@ package config
 
 import (
 	"context"
+	"fmt"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/br/pkg/storage"
 )
+
+const defaultPageSizeBytes = units.MiB
 
 type S3Config struct {
 	Region          string `toml:"region,omitempty"`
@@ -29,13 +33,19 @@ type CommonConfig struct {
 	Rows             int    `toml:"rows"`
 	FileFormat       string `toml:"format"`
 	UseStreamingMode bool   `toml:"use_streaming_mode"`
-	ChunkSizeKB      int    `toml:"chunk_size_kb"`
+	ChunkSize        string `toml:"chunk_size"`
+
+	// ChunkSizeBytes is derived at runtime and not read from config.
+	ChunkSizeBytes int `toml:"-"`
 }
 
 type ParquetConfig struct {
-	PageSizeKB   int64  `toml:"page_size_kb"`
+	PageSize     string `toml:"page_size"`
 	NumRowGroups int    `toml:"row_groups"`
 	Compression  string `toml:"compression"`
+
+	// PageSizeBytes is derived at runtime and not read from config.
+	PageSizeBytes int64 `toml:"-"`
 }
 
 type CSVConfig struct {
@@ -50,6 +60,44 @@ type Config struct {
 	CSV       CSVConfig     `toml:"csv"`
 	S3Config  *S3Config     `toml:"s3,omitempty"`
 	GCSConfig *GCSConfig    `toml:"gcs,omitempty"`
+}
+
+// Normalize resolves derived config values after loading.
+func Normalize(cfg *Config) error {
+	chunkBytes, err := cfg.Common.resolveChunkSizeBytes()
+	if err != nil {
+		return err
+	}
+	cfg.Common.ChunkSizeBytes = chunkBytes
+
+	pageBytes, err := cfg.Parquet.resolvePageSizeBytes()
+	if err != nil {
+		return err
+	}
+	cfg.Parquet.PageSizeBytes = pageBytes
+	return nil
+}
+
+func (c *CommonConfig) resolveChunkSizeBytes() (int, error) {
+	if c.ChunkSize != "" {
+		bytes, err := units.FromHumanSize(c.ChunkSize)
+		if err != nil {
+			return 0, fmt.Errorf("invalid chunk_size %q: %w", c.ChunkSize, err)
+		}
+		return int(bytes), nil
+	}
+	return 0, nil
+}
+
+func (c *ParquetConfig) resolvePageSizeBytes() (int64, error) {
+	if c.PageSize != "" {
+		bytes, err := units.FromHumanSize(c.PageSize)
+		if err != nil {
+			return 0, fmt.Errorf("invalid page_size %q: %w", c.PageSize, err)
+		}
+		return bytes, nil
+	}
+	return defaultPageSizeBytes, nil
 }
 
 // GetStore initializes and returns an ExternalStorage instance based on the provided configuration.

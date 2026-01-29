@@ -299,8 +299,8 @@ func (g *ParquetGenerator) GenerateFileStreaming(
 	buffer := &bytes.Buffer{}
 
 	targetChunkSize := 8 << 20 // Default 8MB
-	if g.cfg.Common.ChunkSizeKB > 0 {
-		targetChunkSize = g.cfg.Common.ChunkSizeKB * 1024
+	if g.cfg.Common.ChunkSizeBytes > 0 {
+		targetChunkSize = g.cfg.Common.ChunkSizeBytes
 	}
 
 	wrapper := &writeWrapper{Writer: &streamingParquetWriter{
@@ -333,7 +333,7 @@ func generateParquetCommon(
 		return err
 	}
 
-	if err := pw.Init(wrapper, numRows, rowGroups, int64(cfg.Parquet.PageSizeKB)<<10, specs, codec); err != nil {
+	if err := pw.Init(wrapper, numRows, rowGroups, cfg.Parquet.PageSizeBytes, specs, codec); err != nil {
 		return errors.Trace(err)
 	}
 	if err := pw.Write(startRowID); err != nil {
