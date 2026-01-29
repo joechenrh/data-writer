@@ -48,6 +48,9 @@ func main() {
 	if err := config.Normalize(&cfg); err != nil {
 		log.Fatalf("Invalid config: %v", err)
 	}
+	if err := config.Validate(&cfg); err != nil {
+		log.Fatalf("%v", err)
+	}
 
 	switch strings.ToLower(*operation) {
 	case "delete":

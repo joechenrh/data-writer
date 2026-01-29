@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -78,11 +79,74 @@ func Normalize(cfg *Config) error {
 	return nil
 }
 
+// Validate returns a user-friendly error if the configuration is invalid.
+func Validate(cfg *Config) error {
+	var errs []string
+
+	if cfg.Common.Path == "" {
+		errs = append(errs, "common.path is required")
+	}
+	if cfg.Common.Prefix == "" {
+		errs = append(errs, "common.prefix is required")
+	}
+	if cfg.Common.EndFileNo <= cfg.Common.StartFileNo {
+		errs = append(errs, "common.end_fileno must be greater than common.start_fileno")
+	}
+	if cfg.Common.Rows <= 0 {
+		errs = append(errs, "common.rows must be greater than 0")
+	}
+	if cfg.Common.Folders < 0 {
+		errs = append(errs, "common.folders must be >= 0")
+	}
+
+	format := strings.ToLower(strings.TrimSpace(cfg.Common.FileFormat))
+	switch format {
+	case "csv", "parquet":
+	default:
+		errs = append(errs, "common.format must be csv or parquet")
+	}
+
+	if cfg.Common.ChunkSize != "" && cfg.Common.ChunkSizeBytes <= 0 {
+		errs = append(errs, "common.chunk_size must be greater than 0")
+	}
+
+	if format == "parquet" {
+		if cfg.Parquet.NumRowGroups <= 0 {
+			errs = append(errs, "parquet.row_groups must be greater than 0")
+		} else if cfg.Common.Rows > 0 && cfg.Common.Rows%cfg.Parquet.NumRowGroups != 0 {
+			errs = append(errs, "parquet.row_groups must divide common.rows")
+		}
+		if cfg.Parquet.PageSizeBytes <= 0 {
+			errs = append(errs, "parquet.page_size must be greater than 0")
+		}
+	}
+
+	if cfg.S3Config != nil && cfg.GCSConfig != nil {
+		errs = append(errs, "only one of [s3] or [gcs] can be configured")
+	}
+
+	if len(errs) == 0 {
+		return nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString("invalid config:\n")
+	for _, err := range errs {
+		sb.WriteString(" - ")
+		sb.WriteString(err)
+		sb.WriteString("\n")
+	}
+	return fmt.Errorf("%s", strings.TrimRight(sb.String(), "\n"))
+}
+
 func (c *CommonConfig) resolveChunkSizeBytes() (int, error) {
 	if c.ChunkSize != "" {
 		bytes, err := units.FromHumanSize(c.ChunkSize)
 		if err != nil {
 			return 0, fmt.Errorf("invalid chunk_size %q: %w", c.ChunkSize, err)
+		}
+		if bytes <= 0 {
+			return 0, fmt.Errorf("invalid chunk_size %q: must be greater than 0", c.ChunkSize)
 		}
 		return int(bytes), nil
 	}
@@ -94,6 +158,9 @@ func (c *ParquetConfig) resolvePageSizeBytes() (int64, error) {
 		bytes, err := units.FromHumanSize(c.PageSize)
 		if err != nil {
 			return 0, fmt.Errorf("invalid page_size %q: %w", c.PageSize, err)
+		}
+		if bytes <= 0 {
+			return 0, fmt.Errorf("invalid page_size %q: must be greater than 0", c.PageSize)
 		}
 		return bytes, nil
 	}
