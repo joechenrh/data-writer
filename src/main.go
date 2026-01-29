@@ -25,6 +25,18 @@ func main() {
 
 	flag.Parse()
 
+	if *showSpec {
+		if *sqlPath == "" {
+			log.Fatalf("SQL file (-sql) is required for -show-spec")
+		}
+		specs, err := spec.GetSpecFromSQL(*sqlPath)
+		if err != nil {
+			log.Fatalf("Failed to parse SQL: %v", err)
+		}
+		fmt.Print(spec.FormatSpecsTable(specs))
+		return
+	}
+
 	profilePath := *cpuProfile
 	if profilePath == "" {
 		profilePath = os.Getenv("CPUPROFILE")
@@ -53,18 +65,6 @@ func main() {
 	}
 	if err := config.Validate(&cfg); err != nil {
 		log.Fatalf("%v", err)
-	}
-
-	if *showSpec {
-		if *sqlPath == "" {
-			log.Fatalf("SQL file (-sql) is required for -show-spec")
-		}
-		specs, err := spec.GetSpecFromSQL(*sqlPath)
-		if err != nil {
-			log.Fatalf("Failed to parse SQL: %v", err)
-		}
-		fmt.Print(spec.FormatSpecsTable(specs))
-		return
 	}
 
 	switch strings.ToLower(*operation) {
