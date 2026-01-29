@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	progressPrefixWidth = 36
+	progressPrefixWidth = 52
 	progressBarWidth    = 32
 )
 
@@ -91,7 +91,8 @@ func (p *ProgressLogger) start() {
 
 			filesDelta := max(curFiles-prevFiles, 0)
 			bytesPerSec := progressRate(curBytes-prevBytes, elapsed)
-			desc := progressDescription(p.action, curBytes, bytesPerSec)
+			filesPerSec := progressRate(curFiles-prevFiles, elapsed)
+			desc := progressDescription(p.action, curBytes, bytesPerSec, filesPerSec)
 			if desc != lastDesc {
 				p.bar.Describe(desc)
 				lastDesc = desc
@@ -125,7 +126,7 @@ func NewFileProgressBar(totalFiles int, action string) *progressbar.ProgressBar 
 		totalFiles,
 		progressbar.OptionSetWriter(os.Stdout),
 		progressbar.OptionEnableColorCodes(true),
-		progressbar.OptionSetDescription(progressDescription(action, 0, 0)),
+		progressbar.OptionSetDescription(progressDescription(action, 0, 0, 0)),
 		progressbar.OptionSetPredictTime(false),
 		progressbar.OptionSetElapsedTime(false),
 		progressbar.OptionShowCount(),
@@ -145,8 +146,14 @@ func NewFileProgressBar(totalFiles int, action string) *progressbar.ProgressBar 
 	)
 }
 
-func progressDescription(action string, bytes int64, bytesPerSec float64) string {
-	prefix := fmt.Sprintf("%s %s (%s/s)", action, units.BytesSize(float64(bytes)), units.BytesSize(bytesPerSec))
+func progressDescription(action string, bytes int64, bytesPerSec float64, filesPerSec float64) string {
+	prefix := fmt.Sprintf(
+		"%s %s (%s/s, %.2f files/s)",
+		action,
+		units.BytesSize(float64(bytes)),
+		units.BytesSize(bytesPerSec),
+		filesPerSec,
+	)
 	return padOrTrim(prefix, progressPrefixWidth) + " "
 }
 
