@@ -54,13 +54,17 @@ func FormatSpecsTable(specs []*ColumnSpec) string {
 		}
 
 		order := "-"
-		switch c.Order {
-		case NumericTotalOrder:
-			order = "total"
-		case NumericPartialOrder:
-			order = "partial"
-		case NumericRandomOrder:
-			order = "random"
+		if isNumericOrderSupported(c.SQLType) {
+			switch c.Order {
+			case NumericTotalOrder:
+				order = "total"
+			case NumericPartialOrder:
+				order = "partial"
+			case NumericRandomOrder:
+				order = "random"
+			}
+		} else {
+			order = "n/a"
 		}
 
 		set := "-"
@@ -88,4 +92,14 @@ func FormatSpecsTable(specs []*ColumnSpec) string {
 
 	_ = w.Flush()
 	return buf.String()
+}
+
+func isNumericOrderSupported(sqlType string) bool {
+	switch strings.ToLower(sqlType) {
+	case "tinyint", "smallint", "mediumint", "int", "bigint",
+		"float", "double", "decimal", "year":
+		return true
+	default:
+		return false
+	}
 }
