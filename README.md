@@ -11,6 +11,11 @@ This tool can generate data and write directly into S3(GCS, AWS S3, KS3, etc.).
 ./bin/data-writer -op create -cfg config.toml -sql schema.sql -threads 16
 ```
 
+Preview schema specs (with comments applied):
+```bash
+./bin/data-writer -show-spec -cfg config.toml -sql schema.sql
+```
+
 ### 2. Upload - Upload existing local files to remote storage
 ```bash
 ./bin/data-writer -op upload -cfg config.toml -dir /path/to/local/directory -threads 16

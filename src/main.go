@@ -2,12 +2,14 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"runtime/pprof"
 	"strings"
 
 	"dataWriter/src/config"
+	"dataWriter/src/spec"
 
 	"github.com/BurntSushi/toml"
 )
@@ -19,6 +21,7 @@ func main() {
 	threads := flag.Int("threads", 16, "threads")
 	localDir := flag.String("dir", "", "local directory for upload operation")
 	cpuProfile := flag.String("cpuprofile", "", "write cpu profile to file (or use CPUPROFILE env var)")
+	showSpec := flag.Bool("show-spec", false, "print parsed schema spec and exit")
 
 	flag.Parse()
 
@@ -50,6 +53,18 @@ func main() {
 	}
 	if err := config.Validate(&cfg); err != nil {
 		log.Fatalf("%v", err)
+	}
+
+	if *showSpec {
+		if *sqlPath == "" {
+			log.Fatalf("SQL file (-sql) is required for -show-spec")
+		}
+		specs, err := spec.GetSpecFromSQL(*sqlPath)
+		if err != nil {
+			log.Fatalf("Failed to parse SQL: %v", err)
+		}
+		fmt.Print(spec.FormatSpecsTable(specs))
+		return
 	}
 
 	switch strings.ToLower(*operation) {
