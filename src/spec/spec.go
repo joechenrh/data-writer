@@ -30,8 +30,7 @@ const validChar = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXY
 type NumericOrder int
 
 const (
-	NumericNoOrder NumericOrder = iota
-	NumericTotalOrder
+	NumericTotalOrder NumericOrder = iota
 	NumericPartialOrder
 	NumericRandomOrder
 )
@@ -110,6 +109,7 @@ func splitCommentOpts(comment string) ([]string, error) {
 
 // parseComment parse the comment string and set the corresponding fields in ColumnSpec
 func (c *ColumnSpec) parseComment(comment string) error {
+	c.Order = NumericRandomOrder
 	comment = strings.ReplaceAll(comment, " ", "")
 	if comment == "" {
 		return nil
@@ -163,6 +163,8 @@ func (c *ColumnSpec) parseComment(comment string) error {
 				c.Order = NumericPartialOrder
 			case "random_order":
 				c.Order = NumericRandomOrder
+			default:
+				return fmt.Errorf("invalid order for column %s: %q", c.OrigName, v)
 			}
 		}
 	}
@@ -323,15 +325,13 @@ func (c *ColumnSpec) String() string {
 		builder.WriteString(", IsUnique: true")
 	}
 
-	if c.Order != NumericNoOrder {
-		switch c.Order {
-		case NumericTotalOrder:
-			builder.WriteString(", Order: total_order")
-		case NumericPartialOrder:
-			builder.WriteString(", Order: partial_order")
-		case NumericRandomOrder:
-			builder.WriteString(", Order: random_order")
-		}
+	switch c.Order {
+	case NumericTotalOrder:
+		builder.WriteString(", Order: total_order")
+	case NumericPartialOrder:
+		builder.WriteString(", Order: partial_order")
+	case NumericRandomOrder:
+		builder.WriteString(", Order: random_order")
 	}
 
 	if c.Mean != 0 {
@@ -436,6 +436,7 @@ func GetSpecFromSQL(sqlPath string) ([]*ColumnSpec, error) {
 		}
 		spec = spec.Clone()
 		spec.OrigName = col.Name.L
+		spec.Order = NumericRandomOrder
 		spec.Compress = 100 // default no compression for data generation
 
 		col.FieldType.AddFlag(mysql.PriKeyFlag | mysql.UniqueKeyFlag)

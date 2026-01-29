@@ -96,26 +96,29 @@ func (c *ColumnSpec) generateInt(rowID int, rng *rand.Rand) int {
 		return c.generateGaussianInt(rng)
 	}
 
-	if c.IsUnique && c.Order == NumericNoOrder {
-		c.Order = NumericTotalOrder
-	}
-
 	switch c.Order {
-	case NumericNoOrder:
-		return c.generateRandomInt(rng)
 	case NumericTotalOrder:
-		return rowID
+		if c.IsUnique {
+			return rowID
+		}
+		return c.generateRandomInt(rng)
 	case NumericPartialOrder:
 		if rowID%32 == 0 {
 			return c.generatePartialOrderInt(rowID)
 		}
-		return rowID
+		if c.IsUnique {
+			return rowID
+		}
+		return c.generateRandomInt(rng)
 	case NumericRandomOrder:
-		return c.generatePartialOrderInt(rowID)
+		if c.IsUnique {
+			return c.generatePartialOrderInt(rowID)
+		}
+		return c.generateRandomInt(rng)
 	default:
 		log.Printf("Unsupported order: %d", c.Order)
 	}
-	return rowID
+	return c.generateRandomInt(rng)
 }
 
 func (c *ColumnSpec) generateString(rng *rand.Rand) string {
