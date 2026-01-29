@@ -53,8 +53,21 @@ func FormatSpecsTable(specs []*ColumnSpec) string {
 			unique = "yes"
 		}
 
+		set := "-"
+		if len(c.ValueSet) > 0 {
+			set = strings.Join(c.ValueSet, "|")
+		} else if len(c.IntSet) > 0 {
+			vals := make([]string, 0, len(c.IntSet))
+			for _, v := range c.IntSet {
+				vals = append(vals, strconv.FormatInt(v, 10))
+			}
+			set = strings.Join(vals, "|")
+		}
+
 		order := "-"
-		if isNumericOrderSupported(c.SQLType) {
+		if set != "-" {
+			order = "n/a"
+		} else if isNumericOrderSupported(c.SQLType) {
 			switch c.Order {
 			case NumericTotalOrder:
 				order = "total"
@@ -65,17 +78,6 @@ func FormatSpecsTable(specs []*ColumnSpec) string {
 			}
 		} else {
 			order = "n/a"
-		}
-
-		set := "-"
-		if len(c.ValueSet) > 0 {
-			set = strings.Join(c.ValueSet, "|")
-		} else if len(c.IntSet) > 0 {
-			vals := make([]string, 0, len(c.IntSet))
-			for _, v := range c.IntSet {
-				vals = append(vals, strconv.FormatInt(v, 10))
-			}
-			set = strings.Join(vals, "|")
 		}
 
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
