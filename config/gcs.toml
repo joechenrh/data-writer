@@ -1,0 +1,23 @@
+[common]
+path = "gcs://my-bucket/data-writer"
+prefix = "test.t1"
+start_fileno = 0
+end_fileno = 10
+rows = 60000
+format = "parquet"
+folders = 10
+use_streaming_mode = true
+chunk_size = "16MiB"
+
+[parquet]
+row_groups = 1
+page_size = "1MiB"
+compression = "zstd"
+
+[csv]
+base64 = false
+separator = ","
+endline = "\n"
+
+[gcs]
+credential = "/path/to/service-account.json"

@@ -34,7 +34,10 @@ This operation will upload all files from the specified local directory to the p
 
 ## Configuration
 
-Configuration is a TOML file passed via `-cfg`. See `config/sample.toml` for a template.
+Configuration is a TOML file passed via `-cfg`. See `config/sample.toml` for a template or use one of:
+- `config/local.toml`
+- `config/s3.toml`
+- `config/gcs.toml`
 
 Example:
 ```toml
