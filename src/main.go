@@ -15,11 +15,11 @@ import (
 )
 
 func main() {
-	operation := flag.String("op", "create", "create/delete/show/upload, default is create")
+	operation := flag.String("op", "create", "create/delete/show/ls/upload/download, default is create")
 	sqlPath := flag.String("sql", "", "sql path")
 	cfgPath := flag.String("cfg", "", "config path")
 	threads := flag.Int("threads", 16, "threads")
-	localDir := flag.String("dir", "", "local directory for upload operation")
+	localDir := flag.String("dir", "", "local directory for upload/download operation")
 	cpuProfile := flag.String("cpuprofile", "", "write cpu profile to file (or use CPUPROFILE env var)")
 	showSpec := flag.Bool("show-spec", false, "print parsed schema spec and exit")
 
@@ -72,7 +72,7 @@ func main() {
 		if err := DeleteAllFiles(&cfg); err != nil {
 			log.Fatalf("Failed to delete files: %v", err)
 		}
-	case "show":
+	case "show", "ls":
 		if err := ShowFiles(&cfg); err != nil {
 			log.Fatalf("Failed to show files: %v", err)
 		}
@@ -86,6 +86,13 @@ func main() {
 		}
 		if err := UploadLocalFiles(&cfg, *localDir, *threads); err != nil {
 			log.Fatalf("Failed to upload files: %v", err)
+		}
+	case "download":
+		if *localDir == "" {
+			log.Fatalf("Local directory (-dir) must be specified for download operation")
+		}
+		if err := DownloadFiles(&cfg, *localDir, *threads); err != nil {
+			log.Fatalf("Failed to download files: %v", err)
 		}
 	default:
 		log.Fatalf("Unknown operation: %s", *operation)

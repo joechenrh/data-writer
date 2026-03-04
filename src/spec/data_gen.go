@@ -51,9 +51,20 @@ func (c *ColumnSpec) generateBatchNull(length int, rng *rand.Rand) []bool {
 	return null
 }
 
+func mixRowID(rowID int) uint64 {
+	x := uint64(rowID) + 0x9e3779b97f4a7c15
+	x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9
+	x = (x ^ (x >> 27)) * 0x94d049bb133111eb
+	return x ^ (x >> 31)
+}
+
 func (c *ColumnSpec) generatePartialOrderInt(rowID int) int {
-	randPrefix := (rowID * 1000000007) & 31
+	const randPrefixMask = 31
+	randPrefix := int(mixRowID(rowID) & randPrefixMask)
 	moveBit := c.TypeLen - 6
+	if moveBit <= 0 {
+		return rowID ^ randPrefix
+	}
 	return (randPrefix << moveBit) + rowID
 }
 

@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -184,5 +186,109 @@ func UploadLocalFiles(cfg *config.Config, localDir string, threads int) error {
 	}
 
 	fmt.Printf("\nSuccessfully uploaded %d files\n", len(filesToUpload))
+	return nil
+}
+
+// DownloadFiles downloads all files from the configured remote path to a local directory.
+func DownloadFiles(cfg *config.Config, localDir string, threads int) error {
+	start := time.Now()
+	defer func() {
+		fmt.Printf("Download took %s\n", time.Since(start))
+	}()
+
+	if err := os.MkdirAll(localDir, 0o755); err != nil {
+		return errors.Annotatef(err, "failed to create local directory: %s", localDir)
+	}
+
+	store, err := config.GetStore(cfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer store.Close()
+
+	var filesToDownload []string
+	if err := store.WalkDir(context.Background(), &storage.WalkOption{}, func(path string, size int64) error {
+		filesToDownload = append(filesToDownload, path)
+		return nil
+	}); err != nil {
+		return errors.Trace(err)
+	}
+
+	if len(filesToDownload) == 0 {
+		fmt.Println("No files to download")
+		return nil
+	}
+
+	fmt.Printf("Found %d files to download\n", len(filesToDownload))
+
+	ctx := context.Background()
+	eg, egCtx := errgroup.WithContext(ctx)
+	eg.SetLimit(threads)
+
+	var downloadedFiles atomic.Int32
+	go func() {
+		bar := util.NewFileProgressBar(len(filesToDownload), "downloading")
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+
+		var prev int
+		for range ticker.C {
+			cur := int(downloadedFiles.Load())
+			if cur > prev {
+				_ = bar.Add(cur - prev)
+				prev = cur
+			}
+			if cur >= len(filesToDownload) {
+				_ = bar.Finish()
+				break
+			}
+		}
+	}()
+
+	for _, remotePath := range filesToDownload {
+		remotePath := remotePath
+		eg.Go(func() error {
+			relPath := filepath.Clean(filepath.FromSlash(remotePath))
+			if filepath.IsAbs(relPath) || relPath == ".." ||
+				strings.HasPrefix(relPath, ".."+string(os.PathSeparator)) {
+				return errors.Errorf("invalid remote path: %s", remotePath)
+			}
+
+			localPath := filepath.Join(localDir, relPath)
+			if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
+				return errors.Annotatef(err, "failed to create local directory: %s", filepath.Dir(localPath))
+			}
+
+			reader, err := store.Open(egCtx, remotePath, &storage.ReaderOption{})
+			if err != nil {
+				return errors.Annotatef(err, "failed to open remote file: %s", remotePath)
+			}
+			defer func() {
+				_ = reader.Close()
+			}()
+
+			file, err := os.Create(localPath)
+			if err != nil {
+				return errors.Annotatef(err, "failed to create local file: %s", localPath)
+			}
+			defer func() {
+				_ = file.Close()
+			}()
+
+			if _, err := io.Copy(file, reader); err != nil {
+				return errors.Annotatef(err, "failed to download file: %s", remotePath)
+			}
+
+			downloadedFiles.Add(1)
+			log.Printf("Downloaded: %s -> %s", remotePath, localPath)
+			return nil
+		})
+	}
+
+	if err := eg.Wait(); err != nil {
+		return errors.Trace(err)
+	}
+
+	fmt.Printf("\nSuccessfully downloaded %d files\n", len(filesToDownload))
 	return nil
 }

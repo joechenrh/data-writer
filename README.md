@@ -28,12 +28,22 @@ Preview schema specs (with comments applied):
 ```
 This operation will upload all files from the specified local directory to the path configured in `config.toml`.
 
-### 3. Show - List all files in remote storage
+### 3. Show (ls) - List all files in remote storage
 ```bash
 ./bin/data-writer -op show -cfg config.toml
 ```
+Alias:
+```bash
+./bin/data-writer -op ls -cfg config.toml
+```
 
-### 4. Delete - Delete all files from remote storage
+### 4. Download - Download files from remote storage to a local directory
+```bash
+./bin/data-writer -op download -cfg config.toml -dir /path/to/local/directory -threads 16
+```
+This operation will download all files from the configured remote path into the specified local directory.
+
+### 5. Delete - Delete all files from remote storage
 ```bash
 ./bin/data-writer -op delete -cfg config.toml
 ```
