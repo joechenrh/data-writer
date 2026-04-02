@@ -66,6 +66,11 @@ func GetProgressLogger() *ProgressLogger {
 	return globalProgressLogger
 }
 
+// ResetProgressLogger clears the global progress logger so a new one can be created.
+func ResetProgressLogger() {
+	globalProgressLogger = nil
+}
+
 // UpdateBytes increments the byte counter.
 func (p *ProgressLogger) UpdateBytes(delta int64) {
 	if delta == 0 {
