@@ -61,6 +61,36 @@ func NewOrchestrator(cfg *config.Config, sqlPath string) (*Orchestrator, error) 
 	}, nil
 }
 
+// NewOrchestratorFromSpecs creates an orchestrator from pre-parsed column specs.
+func NewOrchestratorFromSpecs(cfg *config.Config, specs []*spec.ColumnSpec) (*Orchestrator, error) {
+	gen, err := newGenerator(cfg, specs)
+	if err != nil {
+		return nil, err
+	}
+
+	store, err := config.GetStore(cfg)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	logger := util.InitializeProgressLogger(
+		cfg.Common.EndFileNo-cfg.Common.StartFileNo,
+		"writing",
+		time.Second,
+	)
+	logger.SetContext(
+		strings.ToLower(cfg.Common.FileFormat),
+		resolvePlatform(cfg),
+	)
+
+	return &Orchestrator{
+		FileGenerator: gen,
+		cfg:           cfg,
+		store:         store,
+		logger:        logger,
+	}, nil
+}
+
 func newGenerator(cfg *config.Config, specs []*spec.ColumnSpec) (FileGenerator, error) {
 	switch strings.ToLower(cfg.Common.FileFormat) {
 	case "parquet":
