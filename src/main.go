@@ -15,6 +15,8 @@ import (
 )
 
 func main() {
+	serve := flag.Bool("serve", false, "start HTTP server mode")
+	port := flag.Int("port", 8081, "HTTP server port (only used with -serve)")
 	operation := flag.String("op", "create", "create/delete/show/ls/upload/download, default is create")
 	sqlPath := flag.String("sql", "", "sql path")
 	cfgPath := flag.String("cfg", "", "config path")
@@ -24,6 +26,11 @@ func main() {
 	showSpec := flag.Bool("show-spec", false, "print parsed schema spec and exit")
 
 	flag.Parse()
+
+	if *serve {
+		startServer(*port)
+		return
+	}
 
 	if *showSpec {
 		if *sqlPath == "" {
