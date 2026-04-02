@@ -12,17 +12,17 @@ import (
 const defaultPageSizeBytes = units.MiB
 
 type S3Config struct {
-	Region          string `toml:"region,omitempty"`
-	AccessKey       string `toml:"access_key,omitempty"`
-	SecretAccessKey string `toml:"secret_key,omitempty"`
-	Provider        string `toml:"provider,omitempty"`
-	Endpoint        string `toml:"endpoint,omitempty"`
-	Force           bool   `toml:"force,omitempty"`
-	RoleArn         string `toml:"role_arn,omitempty"`
+	Region          string `toml:"region,omitempty" json:"region"`
+	AccessKey       string `toml:"access_key,omitempty" json:"access_key"`
+	SecretAccessKey string `toml:"secret_key,omitempty" json:"secret_key"`
+	Provider        string `toml:"provider,omitempty" json:"provider"`
+	Endpoint        string `toml:"endpoint,omitempty" json:"endpoint"`
+	Force           bool   `toml:"force,omitempty" json:"force"`
+	RoleArn         string `toml:"role_arn,omitempty" json:"role_arn"`
 }
 
 type GCSConfig struct {
-	Credential string `toml:"credential,omitempty"`
+	Credential string `toml:"credential,omitempty" json:"credential"`
 }
 
 type CommonConfig struct {
