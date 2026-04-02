@@ -416,13 +416,8 @@ func readAndCleanSQL(sqlPath string) (string, error) {
 	return query, nil
 }
 
-// GetSpecFromSQL parses a CREATE TABLE SQL file into column specs.
-func GetSpecFromSQL(sqlPath string) ([]*ColumnSpec, error) {
-	query, err := readAndCleanSQL(sqlPath)
-	if err != nil {
-		return nil, err
-	}
-
+// GetSpecFromString parses a CREATE TABLE SQL string into column specs.
+func GetSpecFromString(query string) ([]*ColumnSpec, error) {
 	tbInfo, err := getTableInfoBySQL(query)
 	if err != nil {
 		return nil, err
@@ -439,7 +434,6 @@ func GetSpecFromSQL(sqlPath string) ([]*ColumnSpec, error) {
 		spec.Order = NumericRandomOrder
 		spec.Compress = 100 // default no compression for data generation
 
-		col.FieldType.AddFlag(mysql.PriKeyFlag | mysql.UniqueKeyFlag)
 		if !types.IsTypeNumeric(col.GetType()) && col.GetFlen() > 0 {
 			spec.TypeLen = min(col.GetFlen(), 64)
 		}
@@ -468,6 +462,12 @@ func GetSpecFromSQL(sqlPath string) ([]*ColumnSpec, error) {
 		specs = append(specs, spec)
 	}
 
+	for _, index := range tbInfo.Indices {
+		if index.Primary && len(index.Columns) > 1 {
+			return nil, errors.New("multi-column primary key is unsupported")
+		}
+	}
+
 	if tbInfo.PKIsHandle {
 		for _, col := range tbInfo.Columns {
 			if mysql.HasPriKeyFlag(col.GetFlag()) {
@@ -478,14 +478,26 @@ func GetSpecFromSQL(sqlPath string) ([]*ColumnSpec, error) {
 	}
 
 	for _, index := range tbInfo.Indices {
-		if index.Primary || index.Unique {
-			for _, col := range index.Columns {
-				if col.Offset < len(specs) && col.Offset >= 0 {
-					specs[col.Offset].IsUnique = true
-				}
-			}
+		if !index.Primary && !index.Unique {
+			continue
+		}
+		if len(index.Columns) != 1 {
+			continue
+		}
+		col := index.Columns[0]
+		if col.Offset < len(specs) && col.Offset >= 0 {
+			specs[col.Offset].IsUnique = true
 		}
 	}
 
 	return specs, nil
+}
+
+// GetSpecFromSQL parses a CREATE TABLE SQL file into column specs.
+func GetSpecFromSQL(sqlPath string) ([]*ColumnSpec, error) {
+	query, err := readAndCleanSQL(sqlPath)
+	if err != nil {
+		return nil, err
+	}
+	return GetSpecFromString(query)
 }
