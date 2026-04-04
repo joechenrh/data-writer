@@ -1,10 +1,37 @@
 ## data-writer
-A self-use tool to generate parquet/CSV
+A data generation tool with web dashboard and EC2 worker support.
 
 ## About this tool
-This tool can generate data and write directly into S3(GCS, AWS S3, KS3, etc.).
+Generate parquet/CSV data and write directly to S3 (AWS, KsyunCloud), GCS, or local storage. Supports both CLI and web UI modes.
 
-## Operations
+## Web UI (Server Mode)
+
+Start the dashboard:
+```bash
+go build -o data-writer ./src/
+./data-writer -serve -dsn "postgresql://user:pass@host:5433/db?sslmode=require"
+```
+
+Features:
+- SQL schema editor with AI-assisted generation (via Claude)
+- S3/KsyunCloud/local storage support
+- Async task queue backed by db9 (Postgres)
+- Real-time task status tracking
+- EC2 worker mode: check "Run on EC2" to execute tasks on AWS spot instances
+
+### Worker Mode
+
+Run as a background worker that picks pending EC2 tasks from the database:
+```bash
+./data-writer -worker -dsn "postgresql://user:pass@host:5433/db?sslmode=require"
+```
+
+Check pending EC2 tasks:
+```bash
+./data-writer -check-pending -dsn "postgresql://user:pass@host:5433/db?sslmode=require"
+```
+
+## CLI Operations
 
 ### 1. Create - Generate and upload data
 ```bash
@@ -149,5 +176,28 @@ CREATE TABLE `test` (
 2026/01/28 03:15:50 Progress: written files 16 (0.00 files/s), written size 32.18GiB (1921.72 MiB/s)
 ```
 
+## Architecture
+
+```
+CLI Mode:    data-writer -op create -cfg config.toml -sql schema.sql
+Server Mode: data-writer -serve -dsn <dsn>
+Worker Mode: data-writer -worker -dsn <dsn>
+
+src/
+  main.go              # Entry point (CLI / serve / worker)
+  operations.go        # CLI operations
+  config/              # Config types and validation
+  generator/           # Data generation engine
+  spec/                # SQL schema parsing
+  util/                # Progress logger, chunk utils
+  server/              # HTTP server package
+    server.go          # Server setup, task worker, DB schema
+    handler.go         # API handlers (create/status/tasks/cancel)
+    ai.go              # AI-assisted SQL generation
+    worker.go          # EC2 worker and check-pending modes
+    public/            # Frontend (HTML/CSS/JS)
+```
+
 ## Limitation
 - `DECIMAL` is not supported for CSV yet.
+- Multi-column `PRIMARY KEY` is not supported yet.
