@@ -221,10 +221,13 @@ func (o *Orchestrator) generateStreaming(ctx context.Context, fileNo int) error 
 
 // Run creates files directly without streaming.
 func (o *Orchestrator) Run(streaming bool, threads int) error {
+	return o.RunWithContext(context.Background(), streaming, threads)
+}
+
+func (o *Orchestrator) RunWithContext(ctx context.Context, streaming bool, threads int) error {
 	start := time.Now()
 
-	ctx := context.Background()
-	eg, _ := errgroup.WithContext(ctx)
+	eg, ctx := errgroup.WithContext(ctx)
 	eg.SetLimit(threads)
 
 	startNo := o.cfg.Common.StartFileNo

@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>data-writer</title>
+  <link rel="stylesheet" href="/style.css?v=26">
+</head>
+<body>
+  <header class="navbar">
+    <div class="nav-logo">DW</div>
+    <div class="nav-title">
+      <strong>data-writer</strong>
+      <span>Data Generation</span>
+    </div>
+  </header>
+
+  <main class="page">
+    <div class="container">
+      <h1 class="page-title">Generate Data</h1>
+
+      <form id="gen-form" class="card" novalidate>
+
+        <div class="form-group">
+          <div class="label-row">
+            <label for="sql">SQL Schema</label>
+            <span class="help-hint" id="help-btn"><span class="help-icon">?</span> Don't know how to write COMMENT specs?</span>
+          </div>
+          <textarea id="sql" name="sql" rows="14" placeholder="CREATE TABLE t (&#10;  id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,&#10;  k INT NOT NULL DEFAULT '0',&#10;  c CHAR(120) NOT NULL DEFAULT '' COMMENT 'max_length=120, min_length=120',&#10;  pad CHAR(60) NOT NULL DEFAULT '' COMMENT 'max_length=60, min_length=60',&#10;  score INT COMMENT 'mean=100, stddev=15, order=partial_order',&#10;  status VARCHAR(10) COMMENT 'set=[&quot;active&quot;,&quot;inactive&quot;,&quot;pending&quot;]',&#10;  text_col TEXT DEFAULT NULL COMMENT 'max_length=20000, compress=40',&#10;  nullable_col INT COMMENT 'null_percent=30'&#10;);"></textarea>
+          <div class="ai-assist">
+            <input id="ai-prompt" type="text" placeholder="Describe the schema you want, e.g. &quot;add a created_at timestamp column&quot;">
+            <button id="ai-btn" class="btn btn-ai" type="button">AI Assist</button>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="path">Storage Path</label>
+            <input id="path" name="path" type="text" placeholder="s3://bucket/prefix or /local/path">
+          </div>
+          <div class="form-group form-group--narrow">
+            <label for="prefix">File Prefix</label>
+            <input id="prefix" name="prefix" type="text" placeholder="data_">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group form-group--range">
+            <label>File Range</label>
+            <div class="range-row">
+              <span class="range-bracket">[</span>
+              <input id="start_fileno" name="start_fileno" type="number" value="0" min="0">
+              <span class="range-sep">&ndash;</span>
+              <input id="end_fileno" name="end_fileno" type="number" value="100" min="1">
+              <span class="range-bracket">)</span>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="rows">Rows per File</label>
+            <input id="rows" name="rows" type="number" value="60000" min="1">
+          </div>
+          <div class="form-group">
+            <label for="format">Format</label>
+            <select id="format" name="format">
+              <option value="csv">CSV</option>
+              <option value="parquet">Parquet</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="folders">Subdirs</label>
+            <input id="folders" name="folders" type="number" min="0" placeholder="0">
+          </div>
+        </div>
+
+        <!-- Storage credentials -->
+        <div id="cred-section" class="cred-section" hidden>
+          <div class="form-row">
+            <div class="form-group" style="flex:0 0 auto">
+              <label for="storage_type">Storage</label>
+              <select id="storage_type" name="storage_type" style="width:120px">
+                <option value="aws">AWS</option>
+                <option value="ksyun">KsyunCloud</option>
+              </select>
+            </div>
+          </div>
+          <div id="aws-fields">
+            <label class="checkbox-label" style="margin-bottom:8px">
+              <input id="run-on-ec2" type="checkbox" checked> Run on EC2
+            </label>
+            <div id="ec2-hint" class="cred-hint" hidden>Task will run on a pre-configured EC2 instance with IAM role. No credentials needed.</div>
+            <div id="aws-cred-fields">
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="s3_region">Region</label>
+                  <input id="s3_region" name="s3_region" type="text" placeholder="us-east-1">
+                </div>
+                <div class="form-group">
+                  <label for="s3_provider">Provider</label>
+                  <input id="s3_provider" name="s3_provider" type="text" placeholder="aws">
+                </div>
+              </div>
+              <div class="form-row" style="margin-top:10px">
+                <div class="form-group">
+                  <label for="s3_access_key">Access Key</label>
+                  <input id="s3_access_key" name="s3_access_key" type="text" autocomplete="off">
+                </div>
+                <div class="form-group">
+                  <label for="s3_secret_key">Secret Key</label>
+                  <input id="s3_secret_key" name="s3_secret_key" type="password" autocomplete="off">
+                </div>
+              </div>
+              <div class="form-group" style="margin-top:10px">
+                <label for="s3_endpoint">Endpoint (optional)</label>
+                <input id="s3_endpoint" name="s3_endpoint" type="text" placeholder="https://s3.amazonaws.com">
+              </div>
+            </div>
+          </div>
+          <div id="ksyun-fields" hidden>
+            <p class="cred-hint">Credentials are configured on the server via environment variable. Just provide the S3 path above.</p>
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button id="submit-btn" class="btn btn-primary" type="submit">Generate</button>
+        </div>
+      </form>
+
+      <!-- Task list -->
+      <div class="card task-list-card">
+        <div class="task-list-header">
+          <span class="task-list-title">Tasks</span>
+          <button id="refresh-btn" class="btn btn-ghost" type="button">Refresh</button>
+        </div>
+        <div id="task-list-empty" class="task-list-empty">No tasks yet</div>
+        <table id="task-table" class="task-table" hidden>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Target</th>
+              <th>Status</th>
+              <th>Progress</th>
+              <th>Files</th>
+              <th>Size</th>
+              <th>Created</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="task-tbody"></tbody>
+        </table>
+        <div id="task-list-footer" class="task-list-footer" hidden></div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Comment options modal -->
+  <div id="help-modal" class="modal-overlay">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-title">Column Comment Options</span>
+        <button id="modal-close" class="modal-close" type="button">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="reference-intro">Use SQL <code>COMMENT</code> clauses on column definitions to control data generation behavior.</p>
+        <table class="ref-table">
+          <thead>
+            <tr>
+              <th>Option</th>
+              <th>Description</th>
+              <th>Example</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>null_percent</code></td>
+              <td>Percentage of NULL values (0-100)</td>
+              <td><code>COMMENT 'null_percent=20'</code></td>
+            </tr>
+            <tr>
+              <td><code>max_length</code></td>
+              <td>Max length for string types (CHAR, VARCHAR, TEXT)</td>
+              <td><code>COMMENT 'max_length=120'</code></td>
+            </tr>
+            <tr>
+              <td><code>min_length</code></td>
+              <td>Min length for string types, defaults to 75% of max_length</td>
+              <td><code>COMMENT 'min_length=60'</code></td>
+            </tr>
+            <tr>
+              <td><code>mean</code></td>
+              <td>Mean for numeric distributions (INT, BIGINT, FLOAT, etc.)</td>
+              <td><code>COMMENT 'mean=100'</code></td>
+            </tr>
+            <tr>
+              <td><code>stddev</code></td>
+              <td>Standard deviation for numeric distributions</td>
+              <td><code>COMMENT 'stddev=15'</code></td>
+            </tr>
+            <tr>
+              <td><code>compress</code></td>
+              <td>Compression ratio hint (1-100), lower = more repeated values</td>
+              <td><code>COMMENT 'compress=40'</code></td>
+            </tr>
+            <tr>
+              <td><code>set</code></td>
+              <td>Allowed values as JSON array, supports strings and integers</td>
+              <td><code>COMMENT 'set=["ok","warn"]'</code> or <code>'set=[1,2,3]'</code></td>
+            </tr>
+            <tr>
+              <td><code>order</code></td>
+              <td>Integer ordering: <code>total_order</code> (strictly increasing), <code>partial_order</code> (mostly increasing), <code>random_order</code> (default)</td>
+              <td><code>COMMENT 'order=partial_order'</code></td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="reference-examples">
+          <div class="reference-examples-title">Combined examples</div>
+          <pre><code>`c` char(120) COMMENT 'max_length=120, min_length=120'
+`score` int COMMENT 'mean=100, stddev=15, order=partial_order'
+`text_col` text COMMENT 'max_length=20000, compress=40'
+`status` varchar(10) COMMENT 'set=["active","inactive","pending"]'
+`nullable_col` int COMMENT 'null_percent=30'
+`id_set` int COMMENT 'set=[1,2,3,4,5]'</code></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js?v=26"></script>
+</body>
+</html>

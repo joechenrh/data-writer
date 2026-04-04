@@ -26,41 +26,41 @@ type GCSConfig struct {
 }
 
 type CommonConfig struct {
-	Path             string `toml:"path"`
-	Prefix           string `toml:"prefix"`
-	Folders          int    `toml:"folders"`
-	StartFileNo      int    `toml:"start_fileno"`
-	EndFileNo        int    `toml:"end_fileno"`
-	Rows             int    `toml:"rows"`
-	FileFormat       string `toml:"format"`
-	UseStreamingMode bool   `toml:"use_streaming_mode"`
-	ChunkSize        string `toml:"chunk_size"`
+	Path             string `toml:"path" json:"path"`
+	Prefix           string `toml:"prefix" json:"prefix"`
+	Folders          int    `toml:"folders" json:"folders"`
+	StartFileNo      int    `toml:"start_fileno" json:"start_fileno"`
+	EndFileNo        int    `toml:"end_fileno" json:"end_fileno"`
+	Rows             int    `toml:"rows" json:"rows"`
+	FileFormat       string `toml:"format" json:"format"`
+	UseStreamingMode bool   `toml:"use_streaming_mode" json:"use_streaming_mode"`
+	ChunkSize        string `toml:"chunk_size" json:"chunk_size,omitempty"`
 
 	// ChunkSizeBytes is derived at runtime and not read from config.
-	ChunkSizeBytes int `toml:"-"`
+	ChunkSizeBytes int `toml:"-" json:"-"`
 }
 
 type ParquetConfig struct {
-	PageSize     string `toml:"page_size"`
-	NumRowGroups int    `toml:"row_groups"`
-	Compression  string `toml:"compression"`
+	PageSize     string `toml:"page_size" json:"page_size,omitempty"`
+	NumRowGroups int    `toml:"row_groups" json:"row_groups"`
+	Compression  string `toml:"compression" json:"compression"`
 
 	// PageSizeBytes is derived at runtime and not read from config.
-	PageSizeBytes int64 `toml:"-"`
+	PageSizeBytes int64 `toml:"-" json:"-"`
 }
 
 type CSVConfig struct {
-	Base64    bool   `toml:"base64"`
-	Separator string `toml:"separator,omitempty"`
-	EndLine   string `toml:"endline,omitempty"`
+	Base64    bool   `toml:"base64" json:"base64"`
+	Separator string `toml:"separator,omitempty" json:"separator"`
+	EndLine   string `toml:"endline,omitempty" json:"endline"`
 }
 
 type Config struct {
-	Common    CommonConfig  `toml:"common"`
-	Parquet   ParquetConfig `toml:"parquet"`
-	CSV       CSVConfig     `toml:"csv"`
-	S3Config  *S3Config     `toml:"s3,omitempty"`
-	GCSConfig *GCSConfig    `toml:"gcs,omitempty"`
+	Common    CommonConfig  `toml:"common" json:"common"`
+	Parquet   ParquetConfig `toml:"parquet" json:"parquet"`
+	CSV       CSVConfig     `toml:"csv" json:"csv"`
+	S3Config  *S3Config     `toml:"s3,omitempty" json:"s3,omitempty"`
+	GCSConfig *GCSConfig    `toml:"gcs,omitempty" json:"gcs,omitempty"`
 }
 
 // Normalize resolves derived config values after loading.

@@ -7,8 +7,10 @@ import (
 	"os"
 	"runtime/pprof"
 	"strings"
+	"time"
 
 	"dataWriter/src/config"
+	"dataWriter/src/server"
 	"dataWriter/src/spec"
 
 	"github.com/BurntSushi/toml"
@@ -16,7 +18,10 @@ import (
 
 func main() {
 	serve := flag.Bool("serve", false, "start HTTP server mode")
+	worker := flag.Bool("worker", false, "run as worker: pick pending tasks from DB and execute")
+	checkPending := flag.Bool("check-pending", false, "print number of pending ec2 tasks and exit")
 	port := flag.Int("port", 8081, "HTTP server port (only used with -serve)")
+	dsn := flag.String("dsn", "", "database connection string (used with -serve or -worker)")
 	operation := flag.String("op", "create", "create/delete/show/ls/upload/download, default is create")
 	sqlPath := flag.String("sql", "", "sql path")
 	cfgPath := flag.String("cfg", "", "config path")
@@ -28,7 +33,26 @@ func main() {
 	flag.Parse()
 
 	if *serve {
-		startServer(*port)
+		if *dsn == "" {
+			log.Fatalf("-dsn is required in server mode")
+		}
+		server.StartServer(*port, *dsn)
+		return
+	}
+
+	if *checkPending {
+		if *dsn == "" {
+			log.Fatalf("-dsn is required")
+		}
+		server.CheckPending(*dsn)
+		return
+	}
+
+	if *worker {
+		if *dsn == "" {
+			log.Fatalf("-dsn is required in worker mode")
+		}
+		server.RunWorkerLoop(*dsn, 2*time.Minute)
 		return
 	}
 
