@@ -4,6 +4,7 @@ data-writer
 *.exe
 /tmp/
 *_test.go
+.superpowers/
 *.test
 BENCHMARK_RESULTS.md
 generated_data/
