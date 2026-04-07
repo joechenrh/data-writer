@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"regexp"
 	"strings"
 	"time"
 
@@ -14,22 +13,21 @@ import (
 	"dataWriter/src/util"
 )
 
-var prefixPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$`)
-
 // createRequest is the JSON body for POST /api/create.
 type createRequest struct {
-	SQL         string            `json:"sql"`
-	Path        string            `json:"path"`
-	Prefix      string            `json:"prefix"`
-	Folders     *int              `json:"folders,omitempty"`
-	StartFileNo int               `json:"start_fileno"`
-	EndFileNo   int               `json:"end_fileno"`
-	Rows        int               `json:"rows"`
-	Format      string            `json:"format"`
-	Target      string            `json:"target,omitempty"`
-	Ksyun       bool              `json:"ksyun,omitempty"`
-	S3          *config.S3Config  `json:"s3,omitempty"`
-	GCS         *config.GCSConfig `json:"gcs,omitempty"`
+	SQL         string                `json:"sql"`
+	Path        string                `json:"path"`
+	Folders     *int                  `json:"folders,omitempty"`
+	StartFileNo int                   `json:"start_fileno"`
+	EndFileNo   int                   `json:"end_fileno"`
+	Rows        int                   `json:"rows"`
+	Format      string                `json:"format"`
+	Target      string                `json:"target,omitempty"`
+	Ksyun       bool                  `json:"ksyun,omitempty"`
+	CSV         *config.CSVConfig     `json:"csv,omitempty"`
+	Parquet     *config.ParquetConfig `json:"parquet,omitempty"`
+	S3          *config.S3Config      `json:"s3,omitempty"`
+	GCS         *config.GCSConfig     `json:"gcs,omitempty"`
 }
 
 // handleCreate validates the request, inserts a pending task, and returns its ID.
@@ -47,8 +45,11 @@ func handleCreate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path is required"})
 		return
 	}
-	if req.Prefix != "" && !prefixPattern.MatchString(req.Prefix) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "prefix must match format: xxx.xxx (e.g. test.t1)"})
+
+	// Derive prefix (schema.table) from SQL.
+	prefix, err := spec.GetSchemaTableNameFromSQL(req.SQL)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "SQL must be CREATE TABLE schema.table (...): " + err.Error()})
 		return
 	}
 
@@ -57,7 +58,7 @@ func handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg := buildConfig(req)
+	cfg := buildConfig(req, prefix)
 	if err := config.Normalize(cfg); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -236,7 +237,7 @@ func handleCancel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled"})
 }
 
-func buildConfig(req createRequest) *config.Config {
+func buildConfig(req createRequest, prefix string) *config.Config {
 	format := strings.ToLower(req.Format)
 	if format == "" {
 		format = "csv"
@@ -250,7 +251,7 @@ func buildConfig(req createRequest) *config.Config {
 	cfg := &config.Config{
 		Common: config.CommonConfig{
 			Path:             req.Path,
-			Prefix:           req.Prefix,
+			Prefix:           prefix,
 			Folders:          folders,
 			StartFileNo:      req.StartFileNo,
 			EndFileNo:        req.EndFileNo,
@@ -258,14 +259,32 @@ func buildConfig(req createRequest) *config.Config {
 			FileFormat:       format,
 			UseStreamingMode: true,
 		},
-		Parquet: config.ParquetConfig{
-			NumRowGroups: 1,
-			Compression:  "zstd",
-		},
-		CSV: config.CSVConfig{
-			Separator: ",",
-			EndLine:   "\n",
-		},
+		Parquet: func() config.ParquetConfig {
+			if req.Parquet != nil {
+				p := *req.Parquet
+				if p.NumRowGroups == 0 {
+					p.NumRowGroups = 1
+				}
+				if p.Compression == "" {
+					p.Compression = "zstd"
+				}
+				return p
+			}
+			return config.ParquetConfig{NumRowGroups: 1, Compression: "zstd"}
+		}(),
+		CSV: func() config.CSVConfig {
+			if req.CSV != nil {
+				c := *req.CSV
+				if c.Separator == "" {
+					c.Separator = ","
+				}
+				if c.EndLine == "" {
+					c.EndLine = "\n"
+				}
+				return c
+			}
+			return config.CSVConfig{Separator: ",", EndLine: "\n"}
+		}(),
 		S3Config:  req.S3,
 		GCSConfig: req.GCS,
 	}
@@ -282,9 +301,6 @@ func buildConfig(req createRequest) *config.Config {
 		}
 	}
 
-	if cfg.Common.Prefix == "" {
-		cfg.Common.Prefix = "test.t1"
-	}
 	if cfg.Common.Rows == 0 {
 		cfg.Common.Rows = 60000
 	}

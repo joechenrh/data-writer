@@ -120,6 +120,7 @@ func (c *ColumnSpec) parseComment(comment string) error {
 		return err
 	}
 
+	seen := make(map[string]bool)
 	for _, opt := range opts {
 		s := strings.SplitN(opt, "=", 2)
 		if len(s) != 2 {
@@ -147,12 +148,12 @@ func (c *ColumnSpec) parseComment(comment string) error {
 			var stringValues []string
 			if err := json.Unmarshal([]byte(v), &stringValues); err == nil {
 				c.ValueSet = stringValues
-				continue
+				break
 			}
 			var intValues []int64
 			if err := json.Unmarshal([]byte(v), &intValues); err == nil {
 				c.IntSet = intValues
-				continue
+				break
 			}
 			return fmt.Errorf("invalid set for column %s: %q", c.OrigName, v)
 		case "order":
@@ -166,8 +167,25 @@ func (c *ColumnSpec) parseComment(comment string) error {
 			default:
 				return fmt.Errorf("invalid order for column %s: %q", c.OrigName, v)
 			}
+		default:
+			return fmt.Errorf("unknown comment option for column %s: %q", c.OrigName, k)
+		}
+		seen[k] = true
+	}
+
+	// Mutual exclusion: `set` defines exact values, so distribution/ordering/length hints don't apply.
+	if seen["set"] {
+		for _, k := range []string{"mean", "stddev", "order", "compress", "max_length", "min_length"} {
+			if seen[k] {
+				return fmt.Errorf("column %s: 'set' is mutually exclusive with %q", c.OrigName, k)
+			}
 		}
 	}
+	// Mutual exclusion: a normal distribution (mean/stddev) and an enforced ordering can't coexist.
+	if (seen["mean"] || seen["stddev"]) && seen["order"] {
+		return fmt.Errorf("column %s: 'mean'/'stddev' is mutually exclusive with 'order'", c.OrigName)
+	}
+
 	return nil
 }
 
@@ -379,6 +397,30 @@ func getTableInfoBySQL(createTableSQL string) (table *model.TableInfo, err error
 	}
 
 	return nil, errors.New("not a CREATE TABLE statement")
+}
+
+// GetSchemaTableNameFromSQL extracts the qualified name (schema.table) from a CREATE TABLE statement.
+// Returns an error if the SQL is not a CREATE TABLE or if the schema name is missing.
+func GetSchemaTableNameFromSQL(createTableSQL string) (string, error) {
+	p := parser.New()
+	p.SetSQLMode(mysql.ModeANSIQuotes)
+
+	stmt, err := p.ParseOneStmt(createTableSQL, "", "")
+	if err != nil {
+		return "", err
+	}
+
+	s, ok := stmt.(*ast.CreateTableStmt)
+	if !ok {
+		return "", errors.New("not a CREATE TABLE statement")
+	}
+	if s.Table == nil || s.Table.Name.L == "" {
+		return "", errors.New("table name is missing")
+	}
+	if s.Table.Schema.L == "" {
+		return "", errors.New("schema name is required, use CREATE TABLE schema.table (...)")
+	}
+	return s.Table.Schema.L + "." + s.Table.Name.L, nil
 }
 
 // readAndCleanSQL reads SQL file and cleans up comments and extra content

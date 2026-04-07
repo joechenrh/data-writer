@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>data-writer</title>
-  <link rel="stylesheet" href="/style.css?v=26">
+  <link rel="stylesheet" href="/style.css?v=33">
 </head>
 <body>
   <header class="navbar">
@@ -26,7 +26,7 @@
             <label for="sql">SQL Schema</label>
             <span class="help-hint" id="help-btn"><span class="help-icon">?</span> Don't know how to write COMMENT specs?</span>
           </div>
-          <textarea id="sql" name="sql" rows="14" placeholder="CREATE TABLE t (&#10;  id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,&#10;  k INT NOT NULL DEFAULT '0',&#10;  c CHAR(120) NOT NULL DEFAULT '' COMMENT 'max_length=120, min_length=120',&#10;  pad CHAR(60) NOT NULL DEFAULT '' COMMENT 'max_length=60, min_length=60',&#10;  score INT COMMENT 'mean=100, stddev=15, order=partial_order',&#10;  status VARCHAR(10) COMMENT 'set=[&quot;active&quot;,&quot;inactive&quot;,&quot;pending&quot;]',&#10;  text_col TEXT DEFAULT NULL COMMENT 'max_length=20000, compress=40',&#10;  nullable_col INT COMMENT 'null_percent=30'&#10;);"></textarea>
+          <textarea id="sql" name="sql" rows="14" placeholder="CREATE TABLE test.sbtest (&#10;  id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,&#10;  k INT NOT NULL DEFAULT '0',&#10;  c CHAR(120) NOT NULL DEFAULT '' COMMENT 'max_length=120, min_length=120',&#10;  pad CHAR(60) NOT NULL DEFAULT '' COMMENT 'max_length=60, min_length=60',&#10;  score INT COMMENT 'mean=100, stddev=15',&#10;  rank INT COMMENT 'order=partial_order',&#10;  status VARCHAR(10) COMMENT 'set=[&quot;active&quot;,&quot;inactive&quot;,&quot;pending&quot;]',&#10;  text_col TEXT DEFAULT NULL COMMENT 'max_length=20000, compress=40',&#10;  nullable_col INT COMMENT 'null_percent=30'&#10;);"></textarea>
           <div class="ai-assist">
             <input id="ai-prompt" type="text" placeholder="Describe the schema you want, e.g. &quot;add a created_at timestamp column&quot;">
             <button id="ai-btn" class="btn btn-ai" type="button">AI Assist</button>
@@ -38,43 +38,36 @@
             <label for="path">Storage Path</label>
             <input id="path" name="path" type="text" placeholder="s3://bucket/prefix or /local/path">
           </div>
-          <div class="form-group form-group--narrow">
-            <label for="prefix">File Prefix</label>
-            <input id="prefix" name="prefix" type="text" placeholder="data_">
-          </div>
         </div>
 
         <div class="form-row">
           <div class="form-group form-group--range">
-            <label>File Range</label>
+            <label>Files &times; Rows</label>
             <div class="range-row">
-              <span class="range-bracket">[</span>
-              <input id="start_fileno" name="start_fileno" type="number" value="0" min="0">
-              <span class="range-sep">&ndash;</span>
               <input id="end_fileno" name="end_fileno" type="number" value="100" min="1">
-              <span class="range-bracket">)</span>
+              <span class="range-sep">&times;</span>
+              <input id="rows" name="rows" type="number" value="60000" min="1">
             </div>
-          </div>
-          <div class="form-group">
-            <label for="rows">Rows per File</label>
-            <input id="rows" name="rows" type="number" value="60000" min="1">
-          </div>
-          <div class="form-group">
-            <label for="format">Format</label>
-            <select id="format" name="format">
-              <option value="csv">CSV</option>
-              <option value="parquet">Parquet</option>
-            </select>
           </div>
           <div class="form-group">
             <label for="folders">Subdirs</label>
             <input id="folders" name="folders" type="number" min="0" placeholder="0">
           </div>
+          <div class="form-group">
+            <div class="label-row">
+              <label for="format">Format</label>
+              <span class="help-hint" id="format-options-btn">Options</span>
+            </div>
+            <select id="format" name="format">
+              <option value="csv">CSV</option>
+              <option value="parquet">Parquet</option>
+            </select>
+          </div>
         </div>
 
         <!-- Storage credentials -->
         <div id="cred-section" class="cred-section" hidden>
-          <div class="form-row">
+          <div class="form-row" style="align-items:flex-end">
             <div class="form-group" style="flex:0 0 auto">
               <label for="storage_type">Storage</label>
               <select id="storage_type" name="storage_type" style="width:120px">
@@ -82,11 +75,15 @@
                 <option value="ksyun">KsyunCloud</option>
               </select>
             </div>
+            <div class="form-group" style="flex:0 0 auto" id="ec2-toggle-group">
+              <label class="toggle-label">
+                <input id="run-on-ec2" type="checkbox" checked>
+                <span class="toggle-slider"></span>
+                <span class="toggle-text">EC2</span>
+              </label>
+            </div>
           </div>
           <div id="aws-fields">
-            <label class="checkbox-label" style="margin-bottom:8px">
-              <input id="run-on-ec2" type="checkbox" checked> Run on EC2
-            </label>
             <div id="ec2-hint" class="cred-hint" hidden>Task will run on a pre-configured EC2 instance with IAM role. No credentials needed.</div>
             <div id="aws-cred-fields">
               <div class="form-row">
@@ -161,6 +158,7 @@
       </div>
       <div class="modal-body">
         <p class="reference-intro">Use SQL <code>COMMENT</code> clauses on column definitions to control data generation behavior.</p>
+        <p class="reference-intro"><strong>Mutually exclusive:</strong> <code>set</code> cannot be combined with <code>mean</code>/<code>stddev</code>/<code>order</code>/<code>compress</code>/<code>max_length</code>/<code>min_length</code> (only <code>null_percent</code> is allowed alongside it). <code>mean</code>/<code>stddev</code> cannot be combined with <code>order</code>.</p>
         <table class="ref-table">
           <thead>
             <tr>
@@ -215,7 +213,8 @@
         <div class="reference-examples">
           <div class="reference-examples-title">Combined examples</div>
           <pre><code>`c` char(120) COMMENT 'max_length=120, min_length=120'
-`score` int COMMENT 'mean=100, stddev=15, order=partial_order'
+`score` int COMMENT 'mean=100, stddev=15'
+`rank` int COMMENT 'order=partial_order'
 `text_col` text COMMENT 'max_length=20000, compress=40'
 `status` varchar(10) COMMENT 'set=["active","inactive","pending"]'
 `nullable_col` int COMMENT 'null_percent=30'
@@ -225,6 +224,65 @@
     </div>
   </div>
 
-  <script src="/app.js?v=26"></script>
+  <!-- Format options modal -->
+  <div id="format-modal" class="modal-overlay">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-title">Format Options</span>
+        <button class="modal-close" id="format-modal-close" type="button">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="csv-options">
+          <div class="form-row">
+            <div class="form-group">
+              <label for="csv_separator">Separator</label>
+              <input id="csv_separator" type="text" value="," placeholder=",">
+            </div>
+            <div class="form-group">
+              <label for="csv_endline">Line Ending</label>
+              <select id="csv_endline">
+                <option value="\n" selected>\n (LF)</option>
+                <option value="\r\n">\r\n (CRLF)</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group" style="flex:0 0 auto">
+              <label class="toggle-label">
+                <input id="csv_base64" type="checkbox">
+                <span class="toggle-slider"></span>
+                <span class="toggle-text">Base64 encode</span>
+              </label>
+            </div>
+          </div>
+        </div>
+        <div id="parquet-options" hidden>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="parquet_compression">Compression</label>
+              <select id="parquet_compression">
+                <option value="zstd" selected>zstd</option>
+                <option value="snappy">snappy</option>
+                <option value="gzip">gzip</option>
+                <option value="lz4">lz4</option>
+                <option value="brotli">brotli</option>
+                <option value="none">none</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="parquet_row_groups">Row Groups</label>
+              <input id="parquet_row_groups" type="number" value="1" min="1">
+            </div>
+            <div class="form-group">
+              <label for="parquet_page_size">Page Size</label>
+              <input id="parquet_page_size" type="text" value="1MiB" placeholder="1MiB">
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js?v=33"></script>
 </body>
 </html>

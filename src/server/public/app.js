@@ -18,6 +18,10 @@ const taskListEmpty = document.getElementById('task-list-empty');
 const refreshBtn = document.getElementById('refresh-btn');
 
 const helpBtn = document.getElementById('help-btn');
+const formatSelect = document.getElementById('format');
+const formatModal = document.getElementById('format-modal');
+const formatModalClose = document.getElementById('format-modal-close');
+const formatOptionsBtn = document.getElementById('format-options-btn');
 const helpModal = document.getElementById('help-modal');
 const modalClose = document.querySelector('.modal-close');
 
@@ -44,6 +48,30 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && helpModal.classList.contains('open')) closeHelp();
 });
 
+// ── Format options modal ──
+
+function openFormatModal(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const isCsv = formatSelect.value === 'csv';
+  document.getElementById('csv-options').hidden = !isCsv;
+  document.getElementById('parquet-options').hidden = isCsv;
+  formatModal.classList.add('open');
+}
+
+function closeFormatModal() {
+  formatModal.classList.remove('open');
+}
+
+formatOptionsBtn.addEventListener('click', openFormatModal);
+formatModalClose.addEventListener('click', closeFormatModal);
+formatModal.addEventListener('click', (e) => {
+  if (e.target === formatModal) closeFormatModal();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && formatModal.classList.contains('open')) closeFormatModal();
+});
+
 // ── Credential section toggling ──
 
 function updateCredSection() {
@@ -57,6 +85,12 @@ function updateCredFields() {
   const isKsyun = storageType.value === 'ksyun';
   awsFields.hidden = isKsyun;
   ksyunFields.hidden = !isKsyun;
+  const ec2Group = document.getElementById('ec2-toggle-group');
+  const ec2Checkbox = document.getElementById('run-on-ec2');
+  ec2Group.hidden = isKsyun;
+  if (isKsyun) {
+    ec2Checkbox.checked = false;
+  }
   updateEc2Toggle();
 }
 
@@ -74,42 +108,38 @@ pathInput.addEventListener('input', updateCredSection);
 storageType.addEventListener('change', updateCredFields);
 document.getElementById('run-on-ec2').addEventListener('change', updateEc2Toggle);
 
-// ── Inline prefix validation ──
+// ── Inline SQL validation ──
 
-const prefixInput = document.getElementById('prefix');
-
-prefixInput.addEventListener('input', () => {
-  const val = prefixInput.value.trim();
-  if (val === '' || prefixPattern.test(val)) {
-    prefixInput.classList.remove('invalid');
+sqlTextarea.addEventListener('input', () => {
+  const val = sqlTextarea.value.trim();
+  if (val === '' || schemaTablePattern.test(val)) {
+    sqlTextarea.classList.remove('invalid');
   } else {
-    prefixInput.classList.add('invalid');
+    sqlTextarea.classList.add('invalid');
   }
 });
 
 // ── Validation ──
 
-const prefixPattern = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
+// Match CREATE TABLE schema.table (...). Allows backticks/quotes around names.
+const schemaTablePattern = /CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+[`"']?[A-Za-z0-9_-]+[`"']?\.[`"']?[A-Za-z0-9_-]+[`"']?\s*\(/i;
 
 function validateForm() {
   const errors = [];
 
-  if (!sqlTextarea.value.trim()) {
+  const sql = sqlTextarea.value.trim();
+  if (!sql) {
     errors.push('SQL Schema is required');
+  } else if (!schemaTablePattern.test(sql)) {
+    errors.push('SQL must use qualified name: CREATE TABLE schema.table (...)');
   }
   if (!pathInput.value.trim()) {
     errors.push('Storage Path is required');
   }
 
-  const prefix = document.getElementById('prefix').value.trim();
-  if (prefix && !prefixPattern.test(prefix)) {
-    errors.push('File Prefix must match format: xxx.xxx (e.g. test.t1)');
-  }
-
-  const start = parseInt(document.getElementById('start_fileno').value, 10) || 0;
   const end = parseInt(document.getElementById('end_fileno').value, 10) || 0;
-  if (end <= start) {
-    errors.push('End file number must be greater than start');
+  if (end <= 0) {
+    errors.push('Files count must be greater than 0');
   }
 
   const rows = parseInt(document.getElementById('rows').value, 10) || 0;
@@ -129,8 +159,7 @@ function buildRequestBody() {
   const body = {
     sql: sqlTextarea.value,
     path,
-    prefix: document.getElementById('prefix').value.trim(),
-    start_fileno: parseInt(document.getElementById('start_fileno').value, 10) || 0,
+    start_fileno: 0,
     end_fileno: parseInt(document.getElementById('end_fileno').value, 10) || 0,
     rows: parseInt(document.getElementById('rows').value, 10) || 0,
     format: document.getElementById('format').value,
@@ -142,6 +171,21 @@ function buildRequestBody() {
 
   if (document.getElementById('run-on-ec2').checked) {
     body.target = 'ec2';
+  }
+
+  // Format-specific options
+  if (body.format === 'csv') {
+    body.csv = {
+      separator: document.getElementById('csv_separator').value || ',',
+      endline: document.getElementById('csv_endline').value.replace(/\\n/g, '\n').replace(/\\r/g, '\r'),
+      base64: document.getElementById('csv_base64').checked,
+    };
+  } else {
+    body.parquet = {
+      compression: document.getElementById('parquet_compression').value || 'zstd',
+      row_groups: parseInt(document.getElementById('parquet_row_groups').value, 10) || 1,
+      page_size: document.getElementById('parquet_page_size').value || '1MiB',
+    };
   }
 
   if (!credSection.hidden) {

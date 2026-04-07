@@ -7,7 +7,6 @@ import (
 	"os"
 	"runtime/pprof"
 	"strings"
-	"time"
 
 	"dataWriter/src/config"
 	"dataWriter/src/server"
@@ -18,8 +17,11 @@ import (
 
 func main() {
 	serve := flag.Bool("serve", false, "start HTTP server mode")
-	worker := flag.Bool("worker", false, "run as worker: pick pending tasks from DB and execute")
-	checkPending := flag.Bool("check-pending", false, "print number of pending ec2 tasks and exit")
+	worker := flag.Bool("worker", false, "run as worker: execute one shard of an ec2 task")
+	workerTaskID := flag.Int64("task-id", 0, "task id to run (worker mode)")
+	workerShard := flag.Int("shard", 0, "shard index to run (worker mode, 0-based)")
+	workerShardTotal := flag.Int("shard-total", 1, "total number of shards for the task (worker mode)")
+	claimTask := flag.Bool("claim-task", false, "atomically reserve one shard of work and print '<id> <shard> <total>' (or '0' if none)")
 	port := flag.Int("port", 8081, "HTTP server port (only used with -serve)")
 	dsn := flag.String("dsn", "", "database connection string (used with -serve or -worker)")
 	operation := flag.String("op", "create", "create/delete/show/ls/upload/download, default is create")
@@ -40,11 +42,11 @@ func main() {
 		return
 	}
 
-	if *checkPending {
+	if *claimTask {
 		if *dsn == "" {
 			log.Fatalf("-dsn is required")
 		}
-		server.CheckPending(*dsn)
+		server.ClaimTask(*dsn)
 		return
 	}
 
@@ -52,7 +54,10 @@ func main() {
 		if *dsn == "" {
 			log.Fatalf("-dsn is required in worker mode")
 		}
-		server.RunWorkerLoop(*dsn, 2*time.Minute)
+		if *workerTaskID <= 0 {
+			log.Fatalf("-task-id is required in worker mode")
+		}
+		server.RunWorkerOnce(*dsn, *workerTaskID, *workerShard, *workerShardTotal)
 		return
 	}
 
