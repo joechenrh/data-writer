@@ -46,15 +46,17 @@ CREATE TABLE IF NOT EXISTS tasks (
 	worker_total   INT NOT NULL DEFAULT 1,
 	worker_claimed INT NOT NULL DEFAULT 0,
 	worker_done    INT NOT NULL DEFAULT 0,
+	generators_go  TEXT,
 	created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
 	updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 )`
 
-// migrateTableSQL adds worker shard columns to pre-existing task tables.
+// migrateTableSQL adds new columns to pre-existing task tables.
 const migrateTableSQL = `
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS worker_total   INT NOT NULL DEFAULT 1;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS worker_claimed INT NOT NULL DEFAULT 0;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS worker_done    INT NOT NULL DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS generators_go  TEXT;
 `
 
 // StartServer initializes the database, starts the background worker, and serves HTTP.
