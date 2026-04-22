@@ -3,12 +3,13 @@ bin/
 data-writer
 *.exe
 /tmp/
-*_test.go
+/*_test.go
 .superpowers/
 *.test
 BENCHMARK_RESULTS.md
 generated_data/
 export*
 distributed*
-*.sql
-*.toml
+/*.sql
+/*.toml
+.worktrees/
