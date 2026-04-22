@@ -235,6 +235,8 @@ func commitUserValue(buf *gen.RowBuffer, c *ColumnSpec, out any) {
 		buf.SetFloat64(idx, c.OrigName, x)
 	case string:
 		buf.SetString(idx, c.OrigName, x)
+	default:
+		panic(fmt.Sprintf("commitUserValue: unsupported type %T for column %q", x, c.OrigName))
 	}
 	buf.Advance()
 }
@@ -246,8 +248,9 @@ func commitBuiltinValue(buf *gen.RowBuffer, c *ColumnSpec, v any, def int16) {
 		buf.Advance()
 		return
 	}
-	// Coerce builtin returns into the typed slots RowBuffer understands.
-	// generate() currently returns: string, int, int64, int32, float64, float32.
+	// generate() currently returns string, int, or nil (via def=0).
+	// int32/int64/float32/float64 cases are kept defensively for future
+	// builtin paths (e.g. the parquet row-major FillParquetRow in M2).
 	switch x := v.(type) {
 	case string:
 		buf.SetString(idx, c.OrigName, x)
@@ -261,6 +264,8 @@ func commitBuiltinValue(buf *gen.RowBuffer, c *ColumnSpec, v any, def int16) {
 		buf.SetFloat64(idx, c.OrigName, x)
 	case float32:
 		buf.SetFloat64(idx, c.OrigName, float64(x))
+	default:
+		panic(fmt.Sprintf("commitBuiltinValue: unsupported type %T for column %q", x, c.OrigName))
 	}
 	buf.Advance()
 }
