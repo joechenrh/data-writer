@@ -8,6 +8,7 @@ import (
 	"unsafe"
 
 	"dataWriter/src/config"
+	"dataWriter/src/gen"
 	"dataWriter/src/spec"
 	"dataWriter/src/util"
 
@@ -28,8 +29,14 @@ func generateCSVRow(
 	separator []byte,
 	endline []byte,
 ) []byte {
+	names := make([]string, len(specs))
+	for i, s := range specs {
+		names[i] = s.OrigName
+	}
+	rowBuf := gen.NewRowBuffer(names)
+
 	for i, columnSpec := range specs {
-		s := spec.GenerateSingleField(rowID, columnSpec, rng)
+		s := spec.GenerateSingleFieldUser(rowID, columnSpec, rng, rowBuf)
 		if withBase64 {
 			s = base64.StdEncoding.EncodeToString(string2Bytes(s))
 		}

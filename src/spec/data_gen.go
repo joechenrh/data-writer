@@ -560,7 +560,14 @@ func (c *ColumnSpec) FillParquetBatch(rowID int, valueBuffer any, defLevel []int
 
 // GenerateSingleField returns the string representation of a generated column value.
 func GenerateSingleField(rowID int, spec *ColumnSpec, rng *rand.Rand) string {
-	v, _ := spec.generate(rowID, rng)
+	buf := gen.NewRowBuffer([]string{spec.OrigName})
+	return GenerateSingleFieldUser(rowID, spec, rng, buf)
+}
+
+// GenerateSingleFieldUser is like GenerateSingleField but threads a RowBuffer
+// through so user generators can read sibling columns.
+func GenerateSingleFieldUser(rowID int, spec *ColumnSpec, rng *rand.Rand, buf *gen.RowBuffer) string {
+	v, _ := spec.generateWithUser(rowID, rng, buf)
 	switch val := v.(type) {
 	case string:
 		return val
