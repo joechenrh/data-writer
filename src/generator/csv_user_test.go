@@ -4,6 +4,7 @@ import (
 	"math/rand"
 	"strings"
 	"testing"
+	"time"
 
 	"dataWriter/src/gen"
 	"dataWriter/src/spec"
@@ -42,4 +43,26 @@ func itoa(x int64) string {
 		x /= 10
 	}
 	return string(b)
+}
+
+// TestCSVUserTimeGeneratorFormats verifies that when a user generator for a
+// TIMESTAMP column returns a time.Time, the CSV output is a formatted string
+// (not the raw microsecond int64).  Regression for bug 3.
+func TestCSVUserTimeGeneratorFormats(t *testing.T) {
+	t.Cleanup(gen.ResetForTest)
+	target := time.Date(2026, 4, 21, 12, 34, 56, 0, time.Local)
+	gen.Register("ts", func(c *gen.Ctx) any { return target })
+
+	specs := []*spec.ColumnSpec{
+		{OrigName: "ts", SQLType: "timestamp"},
+	}
+
+	rng := rand.New(rand.NewSource(1))
+	buf := make([]byte, 0, 128)
+	buf = generateCSVRow(specs, 0, false, rng, buf, []byte(","), []byte("\n"))
+	got := string(buf)
+	want := target.Format(time.DateTime) + "\n"
+	if got != want {
+		t.Fatalf("csv row = %q; want %q", got, want)
+	}
 }

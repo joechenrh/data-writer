@@ -561,7 +561,24 @@ func (c *ColumnSpec) FillParquetBatch(rowID int, valueBuffer any, defLevel []int
 // FillParquetRow writes a single row's value (from either user or builtin
 // generator) into idx of valueBuffer, setting defLevel[idx]. Used by the
 // row-major parquet path when user code is present.
+//
+// For columns with a registered user generator, routes through generateWithUser
+// (user value → NormalizeUserValue → typed write) and also commits the value
+// to rowBuf so later sibling user fns can read it.
+//
+// For columns without a user generator, bypasses generateWithUser and calls
+// the existing FillParquetBatch with a 1-element slice view over valueBuffer.
+// This reuses the column-major typed generators (generateTimestampParquet,
+// generateDecimalFixedLenParquet, etc.) that already produce parquet-native
+// values. After the write, a typed value is also committed to rowBuf.
 func (c *ColumnSpec) FillParquetRow(rowID, idx int, valueBuffer any, defLevel []int16, rng *rand.Rand, buf *gen.RowBuffer) error {
+	if _, ok := gen.Lookup(c.OrigName); ok {
+		return c.fillParquetRowUser(rowID, idx, valueBuffer, defLevel, rng, buf)
+	}
+	return c.fillParquetRowBuiltin(rowID, idx, valueBuffer, defLevel, rng, buf)
+}
+
+func (c *ColumnSpec) fillParquetRowUser(rowID, idx int, valueBuffer any, defLevel []int16, rng *rand.Rand, buf *gen.RowBuffer) error {
 	v, def := c.generateWithUser(rowID, rng, buf)
 	defLevel[idx] = def
 	if def == 0 {
@@ -569,28 +586,96 @@ func (c *ColumnSpec) FillParquetRow(rowID, idx int, valueBuffer any, defLevel []
 	}
 	switch c.Type {
 	case parquet.Types.Int32:
-		out := valueBuffer.([]int32)
-		out[idx] = toInt32(v)
+		valueBuffer.([]int32)[idx] = toInt32(v)
 	case parquet.Types.Int64:
-		out := valueBuffer.([]int64)
-		out[idx] = toInt64(v)
+		valueBuffer.([]int64)[idx] = toInt64(v)
 	case parquet.Types.Float:
-		out := valueBuffer.([]float32)
-		out[idx] = float32(toFloat64(v))
+		valueBuffer.([]float32)[idx] = float32(toFloat64(v))
 	case parquet.Types.Double:
-		out := valueBuffer.([]float64)
-		out[idx] = toFloat64(v)
+		valueBuffer.([]float64)[idx] = toFloat64(v)
 	case parquet.Types.ByteArray:
-		out := valueBuffer.([]parquet.ByteArray)
-		out[idx] = parquet.ByteArray([]byte(v.(string)))
+		valueBuffer.([]parquet.ByteArray)[idx] = parquet.ByteArray([]byte(v.(string)))
 	case parquet.Types.FixedLenByteArray:
-		out := valueBuffer.([]parquet.FixedLenByteArray)
-		s := v.(string)
-		out[idx] = parquet.FixedLenByteArray([]byte(s))
+		valueBuffer.([]parquet.FixedLenByteArray)[idx] = parquet.FixedLenByteArray([]byte(v.(string)))
 	default:
-		return fmt.Errorf("unsupported parquet type %v for row-major write", c.Type)
+		return fmt.Errorf("unsupported parquet type %v for row-major user write", c.Type)
 	}
 	return nil
+}
+
+func (c *ColumnSpec) fillParquetRowBuiltin(rowID, idx int, valueBuffer any, defLevel []int16, rng *rand.Rand, buf *gen.RowBuffer) error {
+	oneDef := defLevel[idx : idx+1]
+	oneValueBuf, err := singleSliceView(valueBuffer, idx)
+	if err != nil {
+		return err
+	}
+	if err := c.FillParquetBatch(rowID, oneValueBuf, oneDef, rng); err != nil {
+		return err
+	}
+	commitBuiltinFromParquetBuffer(buf, c, valueBuffer, idx, oneDef[0])
+	return nil
+}
+
+// singleSliceView returns a length-1 slice view over src starting at idx.
+// Used by fillParquetRowBuiltin to adapt FillParquetBatch's slice-based API
+// to a single-row write.
+func singleSliceView(src any, idx int) (any, error) {
+	switch s := src.(type) {
+	case []int32:
+		return s[idx : idx+1 : idx+1], nil
+	case []int64:
+		return s[idx : idx+1 : idx+1], nil
+	case []float32:
+		return s[idx : idx+1 : idx+1], nil
+	case []float64:
+		return s[idx : idx+1 : idx+1], nil
+	case []parquet.ByteArray:
+		return s[idx : idx+1 : idx+1], nil
+	case []parquet.FixedLenByteArray:
+		return s[idx : idx+1 : idx+1], nil
+	default:
+		return nil, fmt.Errorf("singleSliceView: unsupported type %T", src)
+	}
+}
+
+// commitBuiltinFromParquetBuffer reads the value that FillParquetBatch just
+// wrote into valueBuffer[idx] and commits a Go-native version to buf so later
+// sibling user generators can read it through ctx.Int64 / ctx.Time / etc.
+//
+// For time-typed columns (TIMESTAMP/DATETIME/TIME/DATE) the parquet buffer
+// holds int64 μs or int32 days — we convert back to time.Time here so
+// ctx.Time(col) works. For everything else we commit the raw typed value.
+func commitBuiltinFromParquetBuffer(buf *gen.RowBuffer, c *ColumnSpec, valueBuffer any, idx int, def int16) {
+	commitIdx := buf.CurrentIndex()
+	if def == 0 {
+		buf.SetNull(commitIdx, c.OrigName)
+		buf.Advance()
+		return
+	}
+	switch c.SQLType {
+	case "timestamp", "datetime", "time":
+		us := valueBuffer.([]int64)[idx]
+		buf.SetTime(commitIdx, c.OrigName, time.UnixMicro(us))
+	case "date":
+		days := valueBuffer.([]int32)[idx]
+		buf.SetTime(commitIdx, c.OrigName, time.Unix(int64(days)*86400, 0).UTC())
+	default:
+		switch c.Type {
+		case parquet.Types.Int32:
+			buf.SetInt32(commitIdx, c.OrigName, valueBuffer.([]int32)[idx])
+		case parquet.Types.Int64:
+			buf.SetInt64(commitIdx, c.OrigName, valueBuffer.([]int64)[idx])
+		case parquet.Types.Float:
+			buf.SetFloat64(commitIdx, c.OrigName, float64(valueBuffer.([]float32)[idx]))
+		case parquet.Types.Double:
+			buf.SetFloat64(commitIdx, c.OrigName, valueBuffer.([]float64)[idx])
+		case parquet.Types.ByteArray:
+			buf.SetString(commitIdx, c.OrigName, string(valueBuffer.([]parquet.ByteArray)[idx]))
+		case parquet.Types.FixedLenByteArray:
+			buf.SetString(commitIdx, c.OrigName, string(valueBuffer.([]parquet.FixedLenByteArray)[idx]))
+		}
+	}
+	buf.Advance()
 }
 
 func toInt32(v any) int32 {
@@ -634,9 +719,31 @@ func GenerateSingleField(rowID int, spec *ColumnSpec, rng *rand.Rand) string {
 }
 
 // GenerateSingleFieldUser is like GenerateSingleField but threads a RowBuffer
-// through so user generators can read sibling columns.
+// through so user generators can read sibling columns. Time columns whose
+// user generators return time.Time will be normalized to int64/int32 by
+// NormalizeUserValue; this function formats them back to the CSV string
+// form expected by downstream writers.
 func GenerateSingleFieldUser(rowID int, spec *ColumnSpec, rng *rand.Rand, buf *gen.RowBuffer) string {
 	v, _ := spec.generateWithUser(rowID, rng, buf)
+
+	// Time columns are normalized to int64 μs / int32 days for the parquet
+	// path. For CSV we need a formatted string that matches the builtin
+	// behavior (see generateRandomTime).
+	switch spec.SQLType {
+	case "timestamp", "datetime":
+		if i, ok := v.(int64); ok {
+			return time.UnixMicro(i).Format(time.DateTime)
+		}
+	case "time":
+		if i, ok := v.(int64); ok {
+			return time.UnixMicro(i).Format(time.TimeOnly)
+		}
+	case "date":
+		if i, ok := v.(int32); ok {
+			return time.Unix(int64(i)*86400, 0).UTC().Format(time.DateOnly)
+		}
+	}
+
 	switch val := v.(type) {
 	case string:
 		return val
