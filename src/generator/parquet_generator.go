@@ -308,9 +308,10 @@ func (pw *ParquetWriter) writeRowGroupRowMajor(rgw file.SerialRowGroupWriter, st
 		names[i] = s.OrigName
 	}
 
+	rowBuf := gen.NewRowBuffer(names)
 	for r := 0; r < pw.rowsPerRowGroup; r++ {
 		rowID := startRowID + r
-		rowBuf := gen.NewRowBuffer(names)
+		rowBuf.Reset()
 		for c, s := range pw.specs {
 			valueSlice := pw.rgValueBufs[c]
 			if err := s.FillParquetRow(rowID, r, valueSlice, pw.rgDefLevels[c], pw.rng, rowBuf); err != nil {
