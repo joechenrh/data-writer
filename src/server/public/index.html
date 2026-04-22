@@ -5,6 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>data-writer</title>
   <link rel="stylesheet" href="/style.css?v=33">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/editor/editor.main.css">
+  <script>
+    var require = { paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs' } };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/loader.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/editor/editor.main.nls.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/editor/editor.main.js"></script>
 </head>
 <body>
   <header class="navbar">
@@ -116,6 +123,19 @@
             <p class="cred-hint">Credentials are configured on the server via environment variable. Just provide the S3 path above.</p>
           </div>
         </div>
+
+        <details class="generators-panel">
+          <summary>Custom generators (Go)</summary>
+          <p class="hint">
+            Override the default per-column generator with a Go function. Any column
+            without a matching function uses the default behavior.
+          </p>
+          <div class="generators-actions">
+            <button type="button" id="scaffoldBtn" class="btn btn-ghost">Scaffold from SQL</button>
+            <span id="scaffoldStatus" class="hint"></span>
+          </div>
+          <div id="generatorsEditor" class="generators-editor"></div>
+        </details>
 
         <div class="form-actions">
           <button id="submit-btn" class="btn btn-primary" type="submit">Generate</button>

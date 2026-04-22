@@ -202,6 +202,14 @@ function buildRequestBody() {
     }
   }
 
+  if (goEditor) {
+    const text = goEditor.getValue().trim();
+    if (text) {
+      body.generators_go = text;
+      body.target = 'ec2'; // custom generators only supported on EC2
+    }
+  }
+
   return body;
 }
 
@@ -436,3 +444,64 @@ form.addEventListener('submit', async (e) => {
 // ── Initial load ──
 updateEc2Toggle();
 loadTasks();
+
+// ── Custom generators panel ──
+
+let goEditor = null;
+
+function initGoEditor() {
+  if (goEditor) return;
+  if (typeof require === 'undefined' || typeof require !== 'function') return;
+  require(['vs/editor/editor.main'], function () {
+    goEditor = monaco.editor.create(document.getElementById('generatorsEditor'), {
+      value: '',
+      language: 'go',
+      automaticLayout: true,
+      minimap: { enabled: false },
+      fontSize: 13,
+    });
+  });
+}
+
+const generatorsPanel = document.querySelector('.generators-panel');
+if (generatorsPanel) {
+  generatorsPanel.addEventListener('toggle', () => {
+    if (generatorsPanel.open) initGoEditor();
+  });
+}
+
+const scaffoldBtn = document.getElementById('scaffoldBtn');
+if (scaffoldBtn) {
+  scaffoldBtn.addEventListener('click', async () => {
+    const sql = sqlTextarea.value.trim();
+    const status = document.getElementById('scaffoldStatus');
+    if (!sql) {
+      status.textContent = 'Enter SQL first';
+      return;
+    }
+    status.textContent = 'Generating...';
+    try {
+      const resp = await fetch('/api/scaffold', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sql }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        status.textContent = 'Error: ' + (data.error || resp.status);
+        return;
+      }
+      if (goEditor) {
+        goEditor.setValue(data.generators_go);
+      } else {
+        // Editor not yet initialized — stash content and install after init.
+        initGoEditor();
+        setTimeout(() => { if (goEditor) goEditor.setValue(data.generators_go); }, 300);
+      }
+      const lines = (data.generators_go || '').split('\n').length;
+      status.textContent = 'Scaffolded ' + lines + ' lines';
+    } catch (e) {
+      status.textContent = 'Error: ' + e.message;
+    }
+  });
+}
