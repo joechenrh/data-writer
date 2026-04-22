@@ -91,6 +91,7 @@ func StartServer(port int, dsn string) {
 	mux.HandleFunc("GET /api/tasks", handleListTasks)
 	mux.HandleFunc("POST /api/cancel", handleCancel)
 	mux.HandleFunc("POST /api/ai-assist", handleAIAssist)
+	mux.HandleFunc("POST /api/ai-generator-assist", handleAIGeneratorAssist)
 
 	addr := fmt.Sprintf(":%d", port)
 	log.Printf("Starting server on %s", addr)

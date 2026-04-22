@@ -133,6 +133,11 @@
           <div class="generators-actions">
             <button type="button" id="scaffoldBtn" class="btn btn-ghost">Scaffold from SQL</button>
             <span id="scaffoldStatus" class="hint"></span>
+            <span class="help-hint" id="gen-help-btn" style="margin-left:auto"><span class="help-icon">?</span> How to write custom generators?</span>
+          </div>
+          <div class="ai-assist">
+            <input id="gen-ai-prompt" type="text" placeholder="Describe custom logic, e.g. 'device_finger = sha256 of user_id first 12 hex chars'">
+            <button id="gen-ai-btn" class="btn btn-ai" type="button">AI Assist</button>
           </div>
           <div id="generatorsEditor" class="generators-editor"></div>
         </details>
@@ -240,6 +245,88 @@
 `nullable_col` int COMMENT 'null_percent=30'
 `id_set` int COMMENT 'set=[1,2,3,4,5]'</code></pre>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Custom generators guide modal -->
+  <div id="gen-help-modal" class="modal-overlay">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-title">Custom Generators (Go)</span>
+        <button id="gen-help-modal-close" class="modal-close" type="button">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="reference-intro">Override a column's default data generator with a Go function. At EC2 build time, <code>data-writer</code> compiles your code into the worker binary — generator calls are nanosecond-cost.</p>
+
+        <p class="reference-intro"><strong>How it works:</strong> Click <em>Scaffold from SQL</em> to produce a <code>package user</code> file with one commented-out function per column. Uncomment the columns you want to customize; leave the rest as-is and they'll use the builtin generator.</p>
+
+        <div class="reference-examples">
+          <div class="reference-examples-title">Function shape</div>
+          <pre><code>// gen:column device_finger
+func DeviceFinger(ctx *gen.Ctx) any {
+    return fmt.Sprintf("%x", sha256.Sum256([]byte(ctx.String("user_id"))))[:12]
+}</code></pre>
+        </div>
+
+        <p class="reference-intro">The <code>// gen:column &lt;name&gt;</code> directive above each function is required and must exactly match the SQL column name. The function name itself (PascalCase) is only a valid Go identifier — the directive is authoritative.</p>
+
+        <p class="reference-intro"><strong>Return type must match the column's SQL type:</strong></p>
+        <table class="ref-table">
+          <thead>
+            <tr><th>SQL Type</th><th>Return Go Type</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>TINYINT/SMALLINT/MEDIUMINT/INT/YEAR</code></td><td><code>int32</code></td></tr>
+            <tr><td><code>BIGINT</code></td><td><code>int64</code></td></tr>
+            <tr><td><code>FLOAT/DOUBLE</code></td><td><code>float64</code></td></tr>
+            <tr><td><code>CHAR/VARCHAR/TEXT/BLOB/VARBINARY/TINYBLOB</code></td><td><code>string</code></td></tr>
+            <tr><td><code>TIMESTAMP/DATETIME/TIME/DATE</code></td><td><code>time.Time</code></td></tr>
+            <tr><td>Any</td><td><code>nil</code> → produces SQL NULL</td></tr>
+          </tbody>
+        </table>
+
+        <p class="reference-intro"><strong>The <code>*gen.Ctx</code> API gives you:</strong></p>
+        <table class="ref-table">
+          <thead>
+            <tr><th>Member</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>ctx.RowID</code></td><td><code>int64</code> absolute row number across the whole task</td></tr>
+            <tr><td><code>ctx.Rng</code></td><td><code>*math/rand.Rand</code> — worker-local, already seeded. Use <code>ctx.Rng.Int63n(n)</code>, <code>ctx.Rng.Int31n(n)</code>, <code>ctx.Rng.Float64()</code>, etc.</td></tr>
+            <tr><td><code>ctx.Int32(col) / Int64 / Float64 / String / Time</code></td><td>Read a sibling column's value in the current row</td></tr>
+            <tr><td><code>ctx.IsNull(col)</code></td><td>Check if a sibling column is SQL NULL</td></tr>
+          </tbody>
+        </table>
+
+        <p class="reference-intro"><strong>Sibling-read rules:</strong></p>
+        <ul class="reference-intro">
+          <li>You may only read columns that appear <strong>earlier</strong> in <code>CREATE TABLE</code> than the current column. Reading a later column panics at runtime.</li>
+          <li>Using the wrong accessor type (e.g. <code>ctx.Int64</code> on a <code>VARCHAR</code> column) panics.</li>
+          <li>Reading a non-existent column name panics.</li>
+        </ul>
+
+        <div class="reference-examples">
+          <div class="reference-examples-title">More examples</div>
+          <pre><code>// gen:column user_id
+func UserId(ctx *gen.Ctx) any {
+    return ctx.Rng.Int63n(5_000_000) + 1
+}
+
+// gen:column login_name
+func LoginName(ctx *gen.Ctx) any {
+    return fmt.Sprintf("user_%d", ctx.Int64("user_id"))
+}
+
+// gen:column created_at
+func CreatedAt(ctx *gen.Ctx) any {
+    return time.Now().Add(-time.Duration(ctx.Rng.Int63n(86400*30)) * time.Second)
+}</code></pre>
+        </div>
+
+        <p class="reference-intro"><strong>Imports:</strong> <code>"dataWriter/src/gen"</code> is always needed. Add <code>"time"</code>, <code>"fmt"</code>, <code>"crypto/sha256"</code>, etc. as your code requires. Stdlib only — no third-party packages.</p>
+
+        <p class="reference-intro"><strong>Only EC2 execution is supported</strong> for tasks with custom generators. The UI will force <code>target=ec2</code> when the editor has content.</p>
       </div>
     </div>
   </div>

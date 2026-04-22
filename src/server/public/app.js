@@ -505,3 +505,100 @@ if (scaffoldBtn) {
     }
   });
 }
+
+// ── Custom generators help modal ──
+
+const genHelpBtn = document.getElementById('gen-help-btn');
+const genHelpModal = document.getElementById('gen-help-modal');
+const genHelpModalClose = document.getElementById('gen-help-modal-close');
+
+function openGenHelp(e) {
+  // The hint lives inside <details>/<summary>; stop propagation so clicking
+  // the help link doesn't toggle the panel.
+  if (e) e.preventDefault();
+  if (e) e.stopPropagation();
+  genHelpModal.classList.add('open');
+}
+
+function closeGenHelp() {
+  genHelpModal.classList.remove('open');
+}
+
+if (genHelpBtn) {
+  genHelpBtn.addEventListener('click', openGenHelp);
+}
+if (genHelpModalClose) {
+  genHelpModalClose.addEventListener('click', closeGenHelp);
+}
+if (genHelpModal) {
+  genHelpModal.addEventListener('click', (e) => {
+    if (e.target === genHelpModal) closeGenHelp();
+  });
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && genHelpModal && genHelpModal.classList.contains('open')) closeGenHelp();
+});
+
+// ── Custom generators AI Assist ──
+
+const genAiPromptInput = document.getElementById('gen-ai-prompt');
+const genAiBtn = document.getElementById('gen-ai-btn');
+
+async function runGenAi() {
+  if (!genAiBtn || !genAiPromptInput) return;
+  const prompt = genAiPromptInput.value.trim();
+  if (!prompt) return;
+  const sql = sqlTextarea.value.trim();
+  if (!sql) { alert('Enter SQL first'); return; }
+
+  genAiBtn.disabled = true;
+  genAiBtn.classList.add('loading');
+
+  try {
+    // Ensure editor is initialized so we can populate it.
+    initGoEditor();
+    const currentCode = goEditor ? goEditor.getValue() : '';
+
+    const res = await fetch('/api/ai-generator-assist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sql, current_code: currentCode, prompt }),
+    });
+
+    if (!res.ok) {
+      let msg = 'AI error: ' + res.status;
+      try {
+        const errData = await res.json();
+        if (errData.error) msg = errData.error;
+      } catch (_) { /* ignore */ }
+      alert(msg);
+      return;
+    }
+    const data = await res.json();
+    if (data.generators_go) {
+      if (goEditor) {
+        goEditor.setValue(data.generators_go);
+      } else {
+        setTimeout(() => { if (goEditor) goEditor.setValue(data.generators_go); }, 300);
+      }
+      genAiPromptInput.value = '';
+    }
+  } catch (err) {
+    alert('AI request failed: ' + err.message);
+  } finally {
+    genAiBtn.disabled = false;
+    genAiBtn.classList.remove('loading');
+  }
+}
+
+if (genAiBtn) {
+  genAiBtn.addEventListener('click', runGenAi);
+}
+if (genAiPromptInput) {
+  genAiPromptInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.isComposing) {
+      e.preventDefault();
+      runGenAi();
+    }
+  });
+}
