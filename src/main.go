@@ -22,6 +22,9 @@ func main() {
 	workerShard := flag.Int("shard", 0, "shard index to run (worker mode, 0-based)")
 	workerShardTotal := flag.Int("shard-total", 1, "total number of shards for the task (worker mode)")
 	claimTask := flag.Bool("claim-task", false, "atomically reserve one shard of work and print '<id> <shard> <total>' (or '0' if none)")
+	dumpGens := flag.Bool("dump-generators", false, "dump tasks.generators_go for -task-id to stdout")
+	reportFailure := flag.Bool("report-failure", false, "set tasks.state=failed with error content from -err-file")
+	errFile := flag.String("err-file", "", "path to file with error content (used with -report-failure)")
 	port := flag.Int("port", 8081, "HTTP server port (only used with -serve)")
 	dsn := flag.String("dsn", "", "database connection string (used with -serve or -worker)")
 	operation := flag.String("op", "create", "create/delete/show/ls/upload/download, default is create")
@@ -47,6 +50,35 @@ func main() {
 			log.Fatalf("-dsn is required")
 		}
 		server.ClaimTask(*dsn)
+		return
+	}
+
+	if *dumpGens {
+		if *dsn == "" {
+			log.Fatalf("-dsn is required")
+		}
+		if *workerTaskID <= 0 {
+			log.Fatalf("-task-id is required")
+		}
+		if err := server.DumpGenerators(*dsn, *workerTaskID, os.Stdout); err != nil {
+			log.Fatalf("dump-generators: %v", err)
+		}
+		return
+	}
+
+	if *reportFailure {
+		if *dsn == "" {
+			log.Fatalf("-dsn is required")
+		}
+		if *workerTaskID <= 0 {
+			log.Fatalf("-task-id is required")
+		}
+		if *errFile == "" {
+			log.Fatalf("-err-file is required")
+		}
+		if err := server.ReportFailure(*dsn, *workerTaskID, *errFile); err != nil {
+			log.Fatalf("report-failure: %v", err)
+		}
 		return
 	}
 
