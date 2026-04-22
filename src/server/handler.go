@@ -3,6 +3,8 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"go/parser"
+	"go/token"
 	"net/http"
 	"os"
 	"strings"
@@ -15,8 +17,9 @@ import (
 
 // createRequest is the JSON body for POST /api/create.
 type createRequest struct {
-	SQL         string                `json:"sql"`
-	Path        string                `json:"path"`
+	SQL          string                `json:"sql"`
+	GeneratorsGo string                `json:"generators_go,omitempty"`
+	Path         string                `json:"path"`
 	Folders     *int                  `json:"folders,omitempty"`
 	StartFileNo int                   `json:"start_fileno"`
 	EndFileNo   int                   `json:"end_fileno"`
@@ -81,10 +84,27 @@ func handleCreate(w http.ResponseWriter, r *http.Request) {
 		target = "local"
 	}
 
+	if req.GeneratorsGo != "" {
+		if target != "ec2" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "generators_go requires target=ec2"})
+			return
+		}
+		if err := validateGeneratorsGo(req.GeneratorsGo); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "generators_go parse error: " + err.Error()})
+			return
+		}
+		if err := checkRowsPerRowGroup(cfg.Common.Rows, cfg.Parquet.NumRowGroups); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+	}
+
 	var id int64
 	err = DB.QueryRow(r.Context(),
-		`INSERT INTO tasks (sql_text, config_json, total_files, target) VALUES ($1, $2, $3, $4) RETURNING id`,
-		req.SQL, cfgJSON, totalFiles, target,
+		`INSERT INTO tasks (sql_text, config_json, total_files, target, generators_go)
+		 VALUES ($1, $2, $3, $4, NULLIF($5, ''))
+		 RETURNING id`,
+		req.SQL, cfgJSON, totalFiles, target, req.GeneratorsGo,
 	).Scan(&id)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create task: " + err.Error()})
@@ -324,6 +344,23 @@ func formatBytes(b int64) string {
 	default:
 		return fmt.Sprintf("%d B", b)
 	}
+}
+
+func validateGeneratorsGo(src string) error {
+	fset := token.NewFileSet()
+	_, err := parser.ParseFile(fset, "generators_go", src, parser.SkipObjectResolution)
+	return err
+}
+
+func checkRowsPerRowGroup(rows, rowGroups int) error {
+	if rowGroups <= 0 {
+		return fmt.Errorf("row_groups must be > 0")
+	}
+	if rows/rowGroups > 2_000_000 {
+		return fmt.Errorf("with custom generators, rows / row_groups must be <= 2_000_000 (got %d rows / %d groups = %d)",
+			rows, rowGroups, rows/rowGroups)
+	}
+	return nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

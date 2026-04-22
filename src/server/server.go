@@ -86,6 +86,7 @@ func StartServer(port int, dsn string) {
 	mux := http.NewServeMux()
 	mux.Handle("GET /", http.FileServer(http.FS(publicContent)))
 	mux.HandleFunc("POST /api/create", handleCreate)
+	mux.HandleFunc("POST /api/scaffold", handleScaffold)
 	mux.HandleFunc("GET /api/status", handleStatus)
 	mux.HandleFunc("GET /api/tasks", handleListTasks)
 	mux.HandleFunc("POST /api/cancel", handleCancel)
