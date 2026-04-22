@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"dataWriter/src/config"
+	"dataWriter/src/gen"
 	"dataWriter/src/spec"
 	"dataWriter/src/util"
 
@@ -49,6 +50,11 @@ type ParquetWriter struct {
 	defLevels [][]int16
 	valueBufs []any
 	specs     []*spec.ColumnSpec
+
+	// Populated when hasUserCode == true: one whole-row-group buffer per column.
+	rgValueBufs []any
+	rgDefLevels [][]int16
+	hasUserCode bool
 
 	rng *rand.Rand
 
@@ -176,6 +182,32 @@ func (pw *ParquetWriter) Init(w io.Writer, rows, rowGroups int, dataPageSize int
 			pw.valueBufs[i] = make([]parquet.ByteArray, BatchSize)
 		default:
 			panic("unimplemented")
+		}
+	}
+
+	// Detect whether any column has a registered user generator.
+	if gen.HasAny() {
+		pw.hasUserCode = true
+		pw.rgValueBufs = make([]any, len(specs))
+		pw.rgDefLevels = make([][]int16, len(specs))
+		for i, s := range specs {
+			pw.rgDefLevels[i] = make([]int16, pw.rowsPerRowGroup)
+			switch s.Type {
+			case parquet.Types.Int32:
+				pw.rgValueBufs[i] = make([]int32, pw.rowsPerRowGroup)
+			case parquet.Types.Int64:
+				pw.rgValueBufs[i] = make([]int64, pw.rowsPerRowGroup)
+			case parquet.Types.FixedLenByteArray:
+				pw.rgValueBufs[i] = make([]parquet.FixedLenByteArray, pw.rowsPerRowGroup)
+			case parquet.Types.Double:
+				pw.rgValueBufs[i] = make([]float64, pw.rowsPerRowGroup)
+			case parquet.Types.Float:
+				pw.rgValueBufs[i] = make([]float32, pw.rowsPerRowGroup)
+			case parquet.Types.ByteArray:
+				pw.rgValueBufs[i] = make([]parquet.ByteArray, pw.rowsPerRowGroup)
+			default:
+				return errors.Errorf("unsupported parquet type for user generator: %v", s.Type)
+			}
 		}
 	}
 
