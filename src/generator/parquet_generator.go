@@ -185,9 +185,16 @@ func (pw *ParquetWriter) Init(w io.Writer, rows, rowGroups int, dataPageSize int
 		}
 	}
 
-	// Detect whether any column has a registered user generator.
-	if gen.HasAny() {
-		pw.hasUserCode = true
+	// Detect whether any column in this schema has a registered user generator.
+	// Use per-column Lookup rather than HasAny() to avoid activating the
+	// row-major path when the registry holds generators for a different schema.
+	for _, s := range specs {
+		if _, ok := gen.Lookup(s.OrigName); ok {
+			pw.hasUserCode = true
+			break
+		}
+	}
+	if pw.hasUserCode {
 		pw.rgValueBufs = make([]any, len(specs))
 		pw.rgDefLevels = make([][]int16, len(specs))
 		for i, s := range specs {

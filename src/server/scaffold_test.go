@@ -17,7 +17,11 @@ func TestBuildScaffold(t *testing.T) {
 	}
 	for _, want := range []string{
 		"package user",
-		`import "dataWriter/src/gen"`,
+		`"dataWriter/src/gen"`,
+		`"time"`,
+		"// gen:column user_id",
+		"// gen:column device_finger",
+		"// gen:column created_at",
 		"// Column: user_id",
 		"// func UserId(ctx *gen.Ctx) any {",
 		"// Column: device_finger",
@@ -31,6 +35,24 @@ func TestBuildScaffold(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("scaffold missing %q\nfull:\n%s", want, got)
 		}
+	}
+}
+
+func TestBuildScaffoldNoTimeImport(t *testing.T) {
+	sql := `CREATE TABLE app.events (
+		event_id BIGINT,
+		name VARCHAR(64)
+	);`
+	got, err := buildScaffold(sql)
+	if err != nil {
+		t.Fatalf("buildScaffold: %v", err)
+	}
+	// No time columns — must use single-import form without "time".
+	if strings.Contains(got, `"time"`) {
+		t.Fatalf("scaffold unexpectedly imports time:\n%s", got)
+	}
+	if !strings.Contains(got, `import "dataWriter/src/gen"`) {
+		t.Fatalf("scaffold missing single-import form:\n%s", got)
 	}
 }
 
