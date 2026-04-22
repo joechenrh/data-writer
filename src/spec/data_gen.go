@@ -558,6 +558,75 @@ func (c *ColumnSpec) FillParquetBatch(rowID int, valueBuffer any, defLevel []int
 	return nil
 }
 
+// FillParquetRow writes a single row's value (from either user or builtin
+// generator) into idx of valueBuffer, setting defLevel[idx]. Used by the
+// row-major parquet path when user code is present.
+func (c *ColumnSpec) FillParquetRow(rowID, idx int, valueBuffer any, defLevel []int16, rng *rand.Rand, buf *gen.RowBuffer) error {
+	v, def := c.generateWithUser(rowID, rng, buf)
+	defLevel[idx] = def
+	if def == 0 {
+		return nil
+	}
+	switch c.Type {
+	case parquet.Types.Int32:
+		out := valueBuffer.([]int32)
+		out[idx] = toInt32(v)
+	case parquet.Types.Int64:
+		out := valueBuffer.([]int64)
+		out[idx] = toInt64(v)
+	case parquet.Types.Float:
+		out := valueBuffer.([]float32)
+		out[idx] = float32(toFloat64(v))
+	case parquet.Types.Double:
+		out := valueBuffer.([]float64)
+		out[idx] = toFloat64(v)
+	case parquet.Types.ByteArray:
+		out := valueBuffer.([]parquet.ByteArray)
+		out[idx] = parquet.ByteArray([]byte(v.(string)))
+	case parquet.Types.FixedLenByteArray:
+		out := valueBuffer.([]parquet.FixedLenByteArray)
+		s := v.(string)
+		out[idx] = parquet.FixedLenByteArray([]byte(s))
+	default:
+		return fmt.Errorf("unsupported parquet type %v for row-major write", c.Type)
+	}
+	return nil
+}
+
+func toInt32(v any) int32 {
+	switch x := v.(type) {
+	case int32:
+		return x
+	case int:
+		return int32(x)
+	case int64:
+		return int32(x)
+	}
+	panic(fmt.Sprintf("toInt32: unexpected %T", v))
+}
+
+func toInt64(v any) int64 {
+	switch x := v.(type) {
+	case int64:
+		return x
+	case int32:
+		return int64(x)
+	case int:
+		return int64(x)
+	}
+	panic(fmt.Sprintf("toInt64: unexpected %T", v))
+}
+
+func toFloat64(v any) float64 {
+	switch x := v.(type) {
+	case float64:
+		return x
+	case float32:
+		return float64(x)
+	}
+	panic(fmt.Sprintf("toFloat64: unexpected %T", v))
+}
+
 // GenerateSingleField returns the string representation of a generated column value.
 func GenerateSingleField(rowID int, spec *ColumnSpec, rng *rand.Rand) string {
 	buf := gen.NewRowBuffer([]string{spec.OrigName})

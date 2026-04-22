@@ -282,13 +282,70 @@ func (pw *ParquetWriter) writeNextColumn(rgw file.SerialRowGroupWriter, rowIDSta
 func (pw *ParquetWriter) Write(startRowID int) error {
 	for range pw.numRowGroups {
 		rgw := pw.w.AppendRowGroup()
-		for col := range pw.numCols {
-			if _, err := pw.writeNextColumn(rgw, startRowID, col); err != nil {
+		if pw.hasUserCode {
+			if err := pw.writeRowGroupRowMajor(rgw, startRowID); err != nil {
 				return err
+			}
+		} else {
+			for col := range pw.numCols {
+				if _, err := pw.writeNextColumn(rgw, startRowID, col); err != nil {
+					return err
+				}
 			}
 		}
 		startRowID += pw.rowsPerRowGroup
 		rgw.Close()
+	}
+	return nil
+}
+
+// writeRowGroupRowMajor generates an entire row group row-by-row so user
+// generators can read sibling columns committed earlier in the same row,
+// then flushes column-by-column to the parquet serial writer.
+func (pw *ParquetWriter) writeRowGroupRowMajor(rgw file.SerialRowGroupWriter, startRowID int) error {
+	names := make([]string, len(pw.specs))
+	for i, s := range pw.specs {
+		names[i] = s.OrigName
+	}
+
+	for r := 0; r < pw.rowsPerRowGroup; r++ {
+		rowID := startRowID + r
+		rowBuf := gen.NewRowBuffer(names)
+		for c, s := range pw.specs {
+			valueSlice := pw.rgValueBufs[c]
+			if err := s.FillParquetRow(rowID, r, valueSlice, pw.rgDefLevels[c], pw.rng, rowBuf); err != nil {
+				return err
+			}
+		}
+	}
+
+	for col, s := range pw.specs {
+		cw, err := rgw.NextColumn()
+		if err != nil {
+			return err
+		}
+		def := pw.rgDefLevels[col]
+		val := pw.rgValueBufs[col]
+		switch s.Type {
+		case parquet.Types.Int32:
+			_, err = cw.(*file.Int32ColumnChunkWriter).WriteBatch(val.([]int32), def, nil)
+		case parquet.Types.Int64:
+			_, err = cw.(*file.Int64ColumnChunkWriter).WriteBatch(val.([]int64), def, nil)
+		case parquet.Types.Float:
+			_, err = cw.(*file.Float32ColumnChunkWriter).WriteBatch(val.([]float32), def, nil)
+		case parquet.Types.Double:
+			_, err = cw.(*file.Float64ColumnChunkWriter).WriteBatch(val.([]float64), def, nil)
+		case parquet.Types.ByteArray:
+			_, err = cw.(*file.ByteArrayColumnChunkWriter).WriteBatch(val.([]parquet.ByteArray), def, nil)
+		case parquet.Types.FixedLenByteArray:
+			_, err = cw.(*file.FixedLenByteArrayColumnChunkWriter).WriteBatch(val.([]parquet.FixedLenByteArray), def, nil)
+		default:
+			return errors.Errorf("unsupported parquet type in row-major flush: %v", s.Type)
+		}
+		cw.Close()
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
