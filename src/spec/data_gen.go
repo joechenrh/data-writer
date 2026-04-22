@@ -13,6 +13,8 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/pkg/util/hack"
+
+	"dataWriter/src/gen"
 )
 
 var fillA = func() []byte {
@@ -190,6 +192,77 @@ func (c *ColumnSpec) generate(rowID int, rng *rand.Rand) (any, int16) {
 		return rng.Intn(70) + 1970, 1
 	}
 	return nil, 0
+}
+
+// generateWithUser is the user-code-aware variant of generate. When a user
+// GenFunc is registered for this column, it is called; otherwise the builtin
+// path runs. The generated value (or nil) is committed into buf for later
+// sibling columns to read via ctx.
+func (c *ColumnSpec) generateWithUser(rowID int, rng *rand.Rand, buf *gen.RowBuffer) (any, int16) {
+	if fn, ok := gen.Lookup(c.OrigName); ok {
+		ctx := &gen.Ctx{RowID: int64(rowID), Rng: rng, Buf: buf}
+		v := fn(ctx)
+		out, err := gen.NormalizeUserValue(v, c.SQLType)
+		if err != nil {
+			panic(fmt.Sprintf("user generator for column %q (row %d): %v",
+				c.OrigName, rowID, err))
+		}
+		commitUserValue(buf, c, out)
+		if out == nil {
+			return "\\N", 0
+		}
+		return out, 1
+	}
+
+	v, def := c.generate(rowID, rng)
+	commitBuiltinValue(buf, c, v, def)
+	return v, def
+}
+
+func commitUserValue(buf *gen.RowBuffer, c *ColumnSpec, out any) {
+	idx := buf.CurrentIndex()
+	if out == nil {
+		buf.SetNull(idx, c.OrigName)
+		buf.Advance()
+		return
+	}
+	switch x := out.(type) {
+	case int32:
+		buf.SetInt32(idx, c.OrigName, x)
+	case int64:
+		buf.SetInt64(idx, c.OrigName, x)
+	case float64:
+		buf.SetFloat64(idx, c.OrigName, x)
+	case string:
+		buf.SetString(idx, c.OrigName, x)
+	}
+	buf.Advance()
+}
+
+func commitBuiltinValue(buf *gen.RowBuffer, c *ColumnSpec, v any, def int16) {
+	idx := buf.CurrentIndex()
+	if def == 0 {
+		buf.SetNull(idx, c.OrigName)
+		buf.Advance()
+		return
+	}
+	// Coerce builtin returns into the typed slots RowBuffer understands.
+	// generate() currently returns: string, int, int64, int32, float64, float32.
+	switch x := v.(type) {
+	case string:
+		buf.SetString(idx, c.OrigName, x)
+	case int:
+		buf.SetInt64(idx, c.OrigName, int64(x))
+	case int64:
+		buf.SetInt64(idx, c.OrigName, x)
+	case int32:
+		buf.SetInt32(idx, c.OrigName, x)
+	case float64:
+		buf.SetFloat64(idx, c.OrigName, x)
+	case float32:
+		buf.SetFloat64(idx, c.OrigName, float64(x))
+	}
+	buf.Advance()
 }
 
 func (c *ColumnSpec) generateInt64Parquet(rowID int, out []int64, defLevel []int16, rng *rand.Rand) {

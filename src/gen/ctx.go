@@ -2,7 +2,7 @@ package gen
 
 import (
 	"fmt"
-	"math/rand/v2"
+	"math/rand"
 	"time"
 )
 
@@ -11,7 +11,7 @@ import (
 type Ctx struct {
 	RowID int64
 	Rng   *rand.Rand
-	buf   *RowBuffer
+	Buf   *RowBuffer
 }
 
 // RowBuffer holds the typed values of sibling columns in the current row.
@@ -77,7 +77,7 @@ func (b *RowBuffer) lookup(col string) any {
 }
 
 func (c *Ctx) Int32(col string) int32 {
-	v := c.buf.lookup(col)
+	v := c.Buf.lookup(col)
 	x, ok := v.(int32)
 	if !ok {
 		panic(fmt.Sprintf("gen: column %q is not int32 (is %T)", col, v))
@@ -86,7 +86,7 @@ func (c *Ctx) Int32(col string) int32 {
 }
 
 func (c *Ctx) Int64(col string) int64 {
-	v := c.buf.lookup(col)
+	v := c.Buf.lookup(col)
 	x, ok := v.(int64)
 	if !ok {
 		panic(fmt.Sprintf("gen: column %q is not int64 (is %T)", col, v))
@@ -95,7 +95,7 @@ func (c *Ctx) Int64(col string) int64 {
 }
 
 func (c *Ctx) Float64(col string) float64 {
-	v := c.buf.lookup(col)
+	v := c.Buf.lookup(col)
 	x, ok := v.(float64)
 	if !ok {
 		panic(fmt.Sprintf("gen: column %q is not float64 (is %T)", col, v))
@@ -104,7 +104,7 @@ func (c *Ctx) Float64(col string) float64 {
 }
 
 func (c *Ctx) String(col string) string {
-	v := c.buf.lookup(col)
+	v := c.Buf.lookup(col)
 	x, ok := v.(string)
 	if !ok {
 		panic(fmt.Sprintf("gen: column %q is not string (is %T)", col, v))
@@ -113,7 +113,7 @@ func (c *Ctx) String(col string) string {
 }
 
 func (c *Ctx) Time(col string) time.Time {
-	v := c.buf.lookup(col)
+	v := c.Buf.lookup(col)
 	x, ok := v.(time.Time)
 	if !ok {
 		panic(fmt.Sprintf("gen: column %q is not time.Time (is %T)", col, v))
@@ -123,7 +123,7 @@ func (c *Ctx) Time(col string) time.Time {
 
 // IsNull reports whether the named sibling column was generated as NULL.
 func (c *Ctx) IsNull(col string) bool {
-	v := c.buf.lookup(col)
+	v := c.Buf.lookup(col)
 	_, isNull := v.(nilMarker)
 	return isNull
 }

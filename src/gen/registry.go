@@ -26,3 +26,6 @@ func HasAny() bool { return len(registry) > 0 }
 
 // reset clears the registry. Only for tests.
 func reset() { registry = map[string]GenFunc{} }
+
+// ResetForTest clears the registry. Only for tests in other packages.
+func ResetForTest() { reset() }

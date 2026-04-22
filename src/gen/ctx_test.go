@@ -1,7 +1,7 @@
 package gen
 
 import (
-	"math/rand/v2"
+	"math/rand"
 	"testing"
 	"time"
 )
@@ -17,7 +17,7 @@ func TestRowBufferSetAndRead(t *testing.T) {
 	rb.Advance()
 	rb.Advance()
 
-	ctx := &Ctx{RowID: 7, Rng: rand.New(rand.NewPCG(1, 2)), buf: rb}
+	ctx := &Ctx{RowID: 7, Rng: rand.New(rand.NewSource(1)), Buf: rb}
 
 	if got := ctx.Int64("a"); got != 10 {
 		t.Fatalf("ctx.Int64(\"a\") = %d; want 10", got)
@@ -35,7 +35,7 @@ func TestReadUnsetColumnPanics(t *testing.T) {
 	rb.SetInt64(0, "a", 1)
 	rb.Advance() // a is readable; currentIdx=1. Reading "b" (at idx 1) is not allowed.
 
-	ctx := &Ctx{RowID: 0, buf: rb}
+	ctx := &Ctx{RowID: 0, Buf: rb}
 	defer func() {
 		if r := recover(); r == nil {
 			t.Fatalf("reading unset/future column did not panic")
@@ -46,7 +46,7 @@ func TestReadUnsetColumnPanics(t *testing.T) {
 
 func TestReadUnknownColumnPanics(t *testing.T) {
 	rb := NewRowBuffer([]string{"a"})
-	ctx := &Ctx{RowID: 0, buf: rb}
+	ctx := &Ctx{RowID: 0, Buf: rb}
 	defer func() {
 		if r := recover(); r == nil {
 			t.Fatalf("reading unknown column did not panic")
@@ -59,7 +59,7 @@ func TestTypeMismatchPanics(t *testing.T) {
 	rb := NewRowBuffer([]string{"a"})
 	rb.SetString(0, "a", "x")
 	rb.Advance()
-	ctx := &Ctx{RowID: 0, buf: rb}
+	ctx := &Ctx{RowID: 0, Buf: rb}
 	defer func() {
 		if r := recover(); r == nil {
 			t.Fatalf("reading string column as Int64 did not panic")
@@ -74,7 +74,7 @@ func TestIsNull(t *testing.T) {
 	rb.SetInt64(1, "b", 9)
 	rb.Advance()
 	rb.Advance()
-	ctx := &Ctx{RowID: 0, buf: rb}
+	ctx := &Ctx{RowID: 0, Buf: rb}
 	if !ctx.IsNull("a") {
 		t.Fatalf("IsNull(\"a\") = false; want true")
 	}
