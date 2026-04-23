@@ -11,6 +11,7 @@ import (
 	"dataWriter/src/config"
 	"dataWriter/src/server"
 	"dataWriter/src/spec"
+	_ "dataWriter/src/user" // side-effect: src/user/registry_gen.go's init() populates gen.Register
 
 	"github.com/BurntSushi/toml"
 )

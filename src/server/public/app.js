@@ -169,7 +169,11 @@ function buildRequestBody() {
     body.folders = parseInt(foldersVal, 10) || 0;
   }
 
-  if (document.getElementById('run-on-ec2').checked) {
+  // Only send target=ec2 when the path actually needs EC2 (S3) AND the
+  // checkbox is checked. Local paths are always target=local — the EC2 toggle
+  // is hidden for them anyway but retains its default-checked state in the DOM.
+  const isRemotePath = path.toLowerCase().startsWith('s3://');
+  if (isRemotePath && document.getElementById('run-on-ec2').checked) {
     body.target = 'ec2';
   }
 
