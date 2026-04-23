@@ -3,9 +3,7 @@
 const form = document.getElementById('gen-form');
 const submitBtn = document.getElementById('submit-btn');
 const pathInput = document.getElementById('path');
-const credSection = document.getElementById('cred-section');
 const storageType = document.getElementById('storage_type');
-const awsFields = document.getElementById('aws-fields');
 const ksyunFields = document.getElementById('ksyun-fields');
 
 const aiPromptInput = document.getElementById('ai-prompt');
@@ -72,25 +70,24 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && formatModal.classList.contains('open')) closeFormatModal();
 });
 
-// ── Credential section toggling ──
+// ── Storage pill selector ──
 
-function updateCredSection() {
-  const path = pathInput.value.trim().toLowerCase();
-  const isRemote = path.startsWith('s3://');
-  credSection.hidden = !isRemote;
-  updateCredFields();
-}
+document.querySelectorAll('.pill[data-storage]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const val = btn.dataset.storage;
+    storageType.value = val;
+    document.querySelectorAll('.pill[data-storage]').forEach((b) => {
+      b.classList.toggle('pill--active', b === btn);
+    });
+    updateCredFields();
+  });
+});
+
+// ── Credential field toggling ──
 
 function updateCredFields() {
   const isKsyun = storageType.value === 'ksyun';
-  awsFields.hidden = isKsyun;
   ksyunFields.hidden = !isKsyun;
-  const ec2Group = document.getElementById('ec2-toggle-group');
-  const ec2Checkbox = document.getElementById('run-on-ec2');
-  ec2Group.hidden = isKsyun;
-  if (isKsyun) {
-    ec2Checkbox.checked = false;
-  }
   updateEc2Toggle();
 }
 
@@ -100,22 +97,64 @@ function updateEc2Toggle() {
   const awsCredFields = document.getElementById('aws-cred-fields');
   if (!ec2Checkbox) return;
   const isEc2 = ec2Checkbox.checked;
-  ec2Hint.hidden = !isEc2;
-  awsCredFields.hidden = isEc2;
+  const isAws = storageType.value === 'aws';
+  ec2Hint.hidden = !isEc2;                      // hint only when EC2 on
+  awsCredFields.hidden = isEc2 || !isAws;       // creds hidden on EC2 or non-AWS
 }
 
-pathInput.addEventListener('input', updateCredSection);
-storageType.addEventListener('change', updateCredFields);
 document.getElementById('run-on-ec2').addEventListener('change', updateEc2Toggle);
 
-// ── Inline SQL validation ──
+// ── Monaco SQL editor ──
 
-sqlTextarea.addEventListener('input', () => {
-  const val = sqlTextarea.value.trim();
-  if (val === '' || schemaTablePattern.test(val)) {
-    sqlTextarea.classList.remove('invalid');
+let sqlEditor = null;
+
+function initSqlEditor() {
+  if (sqlEditor) return;
+  if (typeof require === 'undefined' || typeof require !== 'function') return;
+  require(['vs/editor/editor.main'], function () {
+    sqlEditor = monaco.editor.create(document.getElementById('sqlEditor'), {
+      value: sqlTextarea.value || '',
+      language: 'sql',
+      automaticLayout: true,
+      minimap: { enabled: false },
+      fontSize: 13,
+    });
+    sqlEditor.onDidChangeModelContent(() => {
+      sqlTextarea.value = sqlEditor.getValue();
+      // Run inline validation on the hidden textarea mirror.
+      const val = sqlTextarea.value.trim();
+      if (val === '' || schemaTablePattern.test(val)) {
+        sqlTextarea.classList.remove('invalid');
+      } else {
+        sqlTextarea.classList.add('invalid');
+      }
+    });
+  });
+}
+
+// Kick off ASAP after page load.
+initSqlEditor();
+
+// ── Insert example ──
+
+const INSERT_EXAMPLE_SQL = `CREATE TABLE test.sbtest (
+  id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  k INT NOT NULL DEFAULT '0',
+  c CHAR(120) NOT NULL DEFAULT '' COMMENT 'max_length=120, min_length=120',
+  pad CHAR(60) NOT NULL DEFAULT '' COMMENT 'max_length=60, min_length=60',
+  score INT COMMENT 'mean=100, stddev=15',
+  rank INT COMMENT 'order=partial_order',
+  status VARCHAR(10) COMMENT 'set=["active","inactive","pending"]',
+  text_col TEXT DEFAULT NULL COMMENT 'max_length=20000, compress=40',
+  nullable_col INT COMMENT 'null_percent=30'
+);`;
+
+document.getElementById('insert-example-btn')?.addEventListener('click', () => {
+  if (sqlEditor) {
+    sqlEditor.setValue(INSERT_EXAMPLE_SQL);
   } else {
-    sqlTextarea.classList.add('invalid');
+    sqlTextarea.value = INSERT_EXAMPLE_SQL;
+    initSqlEditor();
   }
 });
 
@@ -169,9 +208,7 @@ function buildRequestBody() {
     body.folders = parseInt(foldersVal, 10) || 0;
   }
 
-  // Only send target=ec2 when the path actually needs EC2 (S3) AND the
-  // checkbox is checked. Local paths are always target=local — the EC2 toggle
-  // is hidden for them anyway but retains its default-checked state in the DOM.
+  // Send target=ec2 when checkbox is checked and path is S3.
   const isRemotePath = path.toLowerCase().startsWith('s3://');
   if (isRemotePath && document.getElementById('run-on-ec2').checked) {
     body.target = 'ec2';
@@ -192,18 +229,20 @@ function buildRequestBody() {
     };
   }
 
-  if (!credSection.hidden) {
-    if (storageType.value === 'ksyun') {
-      body.ksyun = true;
-    } else {
-      body.s3 = {
-        region: document.getElementById('s3_region').value,
-        provider: document.getElementById('s3_provider').value,
-        access_key: document.getElementById('s3_access_key').value,
-        secret_key: document.getElementById('s3_secret_key').value,
-        endpoint: document.getElementById('s3_endpoint').value,
-      };
-    }
+  // Storage credentials — always evaluate based on pill selection + EC2 state.
+  const isKsyun = storageType.value === 'ksyun';
+  const isEc2 = document.getElementById('run-on-ec2').checked;
+  if (isKsyun) {
+    body.ksyun = true;
+  } else if (!isEc2) {
+    // AWS with explicit credentials (EC2 IAM role not in use).
+    body.s3 = {
+      region: document.getElementById('s3_region').value,
+      provider: document.getElementById('s3_provider').value,
+      access_key: document.getElementById('s3_access_key').value,
+      secret_key: document.getElementById('s3_secret_key').value,
+      endpoint: document.getElementById('s3_endpoint').value,
+    };
   }
 
   if (goEditor) {
@@ -220,7 +259,7 @@ function buildRequestBody() {
 // ── Task list ──
 
 function formatTime(iso) {
-  if (!iso) return '\u2014';
+  if (!iso) return '—';
   const d = new Date(iso);
   const pad = (n) => String(n).padStart(2, '0');
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -240,9 +279,9 @@ function renderTaskRow(task) {
     `<td><span class="status-dot ${task.state}">${task.state}</span></td>` +
     `<td>${task.progress}</td>` +
     `<td>${task.files_written} / ${task.total_files}</td>` +
-    `<td>${task.written_size || '\u2014'}</td>` +
+    `<td>${task.written_size || '—'}</td>` +
     `<td>${formatTime(task.created_at)}</td>` +
-    `<td><button class="actions-trigger" data-id="${task.id}">\u22EF</button></td>`;
+    `<td><button class="actions-trigger" data-id="${task.id}">⋯</button></td>`;
   return tr;
 }
 
@@ -356,7 +395,7 @@ function stopPolling() {
 
 refreshBtn.addEventListener('click', loadTasks);
 
-// ── AI Assist ──
+// ── AI Assist (SQL) ──
 
 aiBtn.addEventListener('click', async () => {
   const prompt = aiPromptInput.value.trim();
@@ -387,7 +426,11 @@ aiBtn.addEventListener('click', async () => {
 
     const data = await res.json();
     if (data.sql) {
-      sqlTextarea.value = data.sql;
+      if (sqlEditor) {
+        sqlEditor.setValue(data.sql);
+      } else {
+        sqlTextarea.value = data.sql;
+      }
     }
     aiPromptInput.value = '';
   } catch (err) {
@@ -445,7 +488,7 @@ form.addEventListener('submit', async (e) => {
   }
 });
 
-// ── Initial load ──
+// ── Initial state ──
 updateEc2Toggle();
 loadTasks();
 
@@ -472,6 +515,8 @@ if (generatorsPanel) {
   generatorsPanel.addEventListener('toggle', () => {
     if (generatorsPanel.open) initGoEditor();
   });
+  // Panel starts open — init editor now.
+  if (generatorsPanel.open) initGoEditor();
 }
 
 const scaffoldBtn = document.getElementById('scaffoldBtn');

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>data-writer</title>
-  <link rel="stylesheet" href="/style.css?v=37">
+  <link rel="stylesheet" href="/style.css?v=38">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/editor/editor.main.css">
   <script>
     var require = { paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs' } };
@@ -24,20 +24,29 @@
 
   <main class="page">
     <div class="container">
-      <h1 class="page-title">Generate Data</h1>
 
-      <form id="gen-form" class="card" novalidate>
+      <header class="page-head">
+        <div>
+          <h1 class="page-title">Data Generator</h1>
+          <p class="page-sub">Describe your table schema or business logic, and let AI help you generate SQL.</p>
+        </div>
+        <span class="help-hint page-help" id="help-btn"><span class="help-icon">?</span> Don't know how to write COMMENT specs?</span>
+      </header>
 
-        <div class="form-group">
-          <div class="label-row">
-            <label for="sql">SQL Schema</label>
-            <span class="help-hint" id="help-btn"><span class="help-icon">?</span> Don't know how to write COMMENT specs?</span>
+      <form id="gen-form" novalidate>
+
+        <section class="card sql-card">
+          <div class="card-head">
+            <span class="card-title">SQL Schema</span>
+            <button type="button" id="insert-example-btn" class="btn btn-ghost btn-sm">&lt;/&gt; Insert example</button>
           </div>
-          <textarea id="sql" name="sql" rows="14" placeholder="CREATE TABLE test.sbtest (&#10;  id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,&#10;  k INT NOT NULL DEFAULT '0',&#10;  c CHAR(120) NOT NULL DEFAULT '' COMMENT 'max_length=120, min_length=120',&#10;  pad CHAR(60) NOT NULL DEFAULT '' COMMENT 'max_length=60, min_length=60',&#10;  score INT COMMENT 'mean=100, stddev=15',&#10;  rank INT COMMENT 'order=partial_order',&#10;  status VARCHAR(10) COMMENT 'set=[&quot;active&quot;,&quot;inactive&quot;,&quot;pending&quot;]',&#10;  text_col TEXT DEFAULT NULL COMMENT 'max_length=20000, compress=40',&#10;  nullable_col INT COMMENT 'null_percent=30'&#10;);"></textarea>
-          <div class="ai-assist">
-            <input id="ai-prompt" type="text" placeholder="Describe the schema you want, e.g. &quot;add a created_at timestamp column&quot;">
-            <button id="ai-btn" class="btn btn-ai" type="button">AI Assist</button>
-          </div>
+          <div id="sqlEditor" class="sql-editor"></div>
+          <textarea id="sql" name="sql" hidden></textarea>
+        </section>
+
+        <div class="ai-assist ai-assist-row">
+          <input id="ai-prompt" type="text" placeholder="Describe the schema you want, e.g. &quot;add a created_at timestamp column&quot;">
+          <button id="ai-btn" class="btn btn-ai" type="button">AI Assist</button>
         </div>
 
         <div class="form-row">
@@ -72,69 +81,78 @@
           </div>
         </div>
 
-        <!-- Storage credentials -->
-        <div id="cred-section" class="cred-section" hidden>
-          <div class="form-row" style="align-items:flex-end">
-            <div class="form-group" style="flex:0 0 auto">
-              <label for="storage_type">Storage</label>
-              <select id="storage_type" name="storage_type" style="width:120px">
-                <option value="aws">AWS</option>
-                <option value="ksyun">KsyunCloud</option>
-              </select>
-            </div>
-            <div class="form-group" style="flex:0 0 auto" id="ec2-toggle-group">
-              <label class="toggle-label">
-                <input id="run-on-ec2" type="checkbox" checked>
-                <span class="toggle-slider"></span>
-                <span class="toggle-text">EC2</span>
-              </label>
+        <section class="card storage-card">
+          <div class="storage-row">
+            <span class="storage-label">Storage</span>
+            <div class="pill-group" role="radiogroup" aria-label="Storage provider">
+              <button type="button" class="pill pill--active" data-storage="aws">
+                <span class="pill-logo pill-logo--aws">aws</span>
+                <span>AWS</span>
+                <span class="pill-check"></span>
+              </button>
+              <button type="button" class="pill" data-storage="ksyun">
+                <span class="pill-logo pill-logo--ksyun">K</span>
+                <span>KsyunCloud</span>
+                <span class="pill-check"></span>
+              </button>
             </div>
           </div>
-          <div id="aws-fields">
-            <div id="ec2-hint" class="cred-hint" hidden>Task will run on a pre-configured EC2 instance with IAM role. No credentials needed.</div>
-            <div id="aws-cred-fields">
-              <div class="form-row">
-                <div class="form-group">
-                  <label for="s3_region">Region</label>
-                  <input id="s3_region" name="s3_region" type="text" placeholder="us-east-1">
-                </div>
-                <div class="form-group">
-                  <label for="s3_provider">Provider</label>
-                  <input id="s3_provider" name="s3_provider" type="text" placeholder="aws">
-                </div>
+
+          <div class="storage-row">
+            <span class="storage-label">Execution</span>
+            <label class="toggle-label">
+              <input id="run-on-ec2" type="checkbox" checked>
+              <span class="toggle-slider"></span>
+              <span class="toggle-text">Run on EC2</span>
+            </label>
+            <span id="ec2-hint" class="cred-hint cred-hint--inline">&#9679; Task will run on a pre-configured EC2 instance with IAM role. No credentials needed.</span>
+          </div>
+
+          <div id="aws-cred-fields" hidden>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="s3_region">Region</label>
+                <input id="s3_region" name="s3_region" type="text" placeholder="us-east-1">
               </div>
-              <div class="form-row" style="margin-top:10px">
-                <div class="form-group">
-                  <label for="s3_access_key">Access Key</label>
-                  <input id="s3_access_key" name="s3_access_key" type="text" autocomplete="off">
-                </div>
-                <div class="form-group">
-                  <label for="s3_secret_key">Secret Key</label>
-                  <input id="s3_secret_key" name="s3_secret_key" type="password" autocomplete="off">
-                </div>
-              </div>
-              <div class="form-group" style="margin-top:10px">
-                <label for="s3_endpoint">Endpoint (optional)</label>
-                <input id="s3_endpoint" name="s3_endpoint" type="text" placeholder="https://s3.amazonaws.com">
+              <div class="form-group">
+                <label for="s3_provider">Provider</label>
+                <input id="s3_provider" name="s3_provider" type="text" placeholder="aws">
               </div>
             </div>
+            <div class="form-row" style="margin-top:10px">
+              <div class="form-group">
+                <label for="s3_access_key">Access Key</label>
+                <input id="s3_access_key" name="s3_access_key" type="text" autocomplete="off">
+              </div>
+              <div class="form-group">
+                <label for="s3_secret_key">Secret Key</label>
+                <input id="s3_secret_key" name="s3_secret_key" type="password" autocomplete="off">
+              </div>
+            </div>
+            <div class="form-group" style="margin-top:10px">
+              <label for="s3_endpoint">Endpoint (optional)</label>
+              <input id="s3_endpoint" name="s3_endpoint" type="text" placeholder="https://s3.amazonaws.com">
+            </div>
           </div>
+
           <div id="ksyun-fields" hidden>
             <p class="cred-hint">Credentials are configured on the server via environment variable. Just provide the S3 path above.</p>
           </div>
-        </div>
+        </section>
 
-        <details class="generators-panel">
-          <summary>Custom generators (Go)</summary>
-          <p class="hint">
-            Override the default per-column generator with a Go function. Any column
-            without a matching function uses the default behavior.
-          </p>
-          <div class="generators-actions">
-            <button type="button" id="scaffoldBtn" class="btn btn-ghost">Scaffold from SQL</button>
-            <button type="button" id="validateBtn" class="btn btn-ghost">Validate</button>
-            <span id="scaffoldStatus" class="hint"></span>
+        <!-- Hidden backing field for pill storage selector -->
+        <input type="hidden" id="storage_type" name="storage_type" value="aws">
+
+        <details class="card generators-panel" open>
+          <summary>
+            <span class="card-title"><span class="chev">&#9660;</span> Custom generators (Go)</span>
             <span class="help-hint" id="gen-help-btn" style="margin-left:auto"><span class="help-icon">?</span> How to write custom generators?</span>
+          </summary>
+          <p class="card-sub">Override the default per-column generator with a Go function. Any column without a matching function uses the default behavior.</p>
+          <div class="generators-actions">
+            <button type="button" id="scaffoldBtn" class="btn btn-ghost btn-sm">Scaffold from SQL</button>
+            <button type="button" id="validateBtn" class="btn btn-ghost btn-sm">Validate</button>
+            <span id="scaffoldStatus" class="hint"></span>
           </div>
           <div class="ai-assist">
             <input id="gen-ai-prompt" type="text" placeholder="Describe custom logic, e.g. 'device_finger = sha256 of user_id first 12 hex chars'">
@@ -144,7 +162,7 @@
         </details>
 
         <div class="form-actions">
-          <button id="submit-btn" class="btn btn-primary" type="submit">Generate</button>
+          <button id="submit-btn" class="btn btn-primary btn-lg" type="submit">Generate</button>
         </div>
       </form>
 
@@ -391,6 +409,6 @@ func CreatedAt(ctx *gen.Ctx) any {
     </div>
   </div>
 
-  <script src="/app.js?v=37"></script>
+  <script src="/app.js?v=38"></script>
 </body>
 </html>
