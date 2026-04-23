@@ -25,6 +25,11 @@ var publicFS embed.FS
 // DB is the database connection pool, shared across handlers.
 var DB *pgxpool.Pool
 
+// serverWorkspace is set at startup and used by /api/validate-generators.
+// Empty when the server was started without -workspace; validation rejects
+// requests in that case.
+var serverWorkspace string
+
 // Currently running task; protected by runningMu.
 var (
 	runningMu     sync.Mutex
@@ -60,7 +65,8 @@ ALTER TABLE tasks ADD COLUMN IF NOT EXISTS generators_go  TEXT;
 `
 
 // StartServer initializes the database, starts the background worker, and serves HTTP.
-func StartServer(port int, dsn string) {
+func StartServer(port int, dsn, workspace string) {
+	serverWorkspace = workspace
 	var err error
 	DB, err = pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -92,6 +98,7 @@ func StartServer(port int, dsn string) {
 	mux.HandleFunc("POST /api/cancel", handleCancel)
 	mux.HandleFunc("POST /api/ai-assist", handleAIAssist)
 	mux.HandleFunc("POST /api/ai-generator-assist", handleAIGeneratorAssist)
+	mux.HandleFunc("POST /api/validate-generators", handleValidateGenerators)
 
 	addr := fmt.Sprintf(":%d", port)
 	log.Printf("Starting server on %s", addr)

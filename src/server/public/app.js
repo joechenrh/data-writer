@@ -611,3 +611,47 @@ if (genAiPromptInput) {
     }
   });
 }
+
+// ── Custom generators validate ──
+
+const validateBtn = document.getElementById('validateBtn');
+
+async function runValidate() {
+  if (!validateBtn) return;
+  if (!goEditor) {
+    initGoEditor();
+    setTimeout(runValidate, 300);
+    return;
+  }
+  const text = goEditor.getValue().trim();
+  const status = document.getElementById('scaffoldStatus');
+  if (!text) {
+    status.textContent = 'Editor is empty';
+    return;
+  }
+  status.textContent = 'Validating... (runs codegen + go build)';
+  validateBtn.disabled = true;
+  try {
+    const res = await fetch('/api/validate-generators', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ generators_go: text }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      status.textContent = 'Invalid ✗';
+      alert(data.error || 'Validation failed');
+      return;
+    }
+    status.textContent = 'Valid ✓ (builds cleanly)';
+  } catch (e) {
+    status.textContent = 'Validate failed';
+    alert('Request failed: ' + e.message);
+  } finally {
+    validateBtn.disabled = false;
+  }
+}
+
+if (validateBtn) {
+  validateBtn.addEventListener('click', runValidate);
+}

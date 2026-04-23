@@ -35,6 +35,7 @@ func main() {
 	localDir := flag.String("dir", "", "local directory for upload/download operation")
 	cpuProfile := flag.String("cpuprofile", "", "write cpu profile to file (or use CPUPROFILE env var)")
 	showSpec := flag.Bool("show-spec", false, "print parsed schema spec and exit")
+	workspace := flag.String("workspace", "", "path to a data-writer source tree (enables /api/validate-generators)")
 
 	flag.Parse()
 
@@ -42,7 +43,7 @@ func main() {
 		if *dsn == "" {
 			log.Fatalf("-dsn is required in server mode")
 		}
-		server.StartServer(*port, *dsn)
+		server.StartServer(*port, *dsn, *workspace)
 		return
 	}
 
