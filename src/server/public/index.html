@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>data-writer</title>
-  <link rel="stylesheet" href="/style.css?v=38">
+  <link rel="stylesheet" href="/style.css?v=39">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/editor/editor.main.css">
   <script>
     var require = { paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs' } };
@@ -38,74 +38,93 @@
         <section class="card sql-card">
           <div class="card-head">
             <span class="card-title">SQL Schema</span>
-            <button type="button" id="insert-example-btn" class="btn btn-ghost btn-sm">&lt;/&gt; Insert example</button>
+            <button type="button" id="insert-example-btn" class="btn btn-ghost btn-sm"><span class="btn-icon">&lt;/&gt;</span> Insert example</button>
           </div>
           <div id="sqlEditor" class="sql-editor"></div>
           <textarea id="sql" name="sql" hidden></textarea>
         </section>
 
         <div class="ai-assist ai-assist-row">
-          <input id="ai-prompt" type="text" placeholder="Describe the schema you want, e.g. &quot;add a created_at timestamp column&quot;">
-          <button id="ai-btn" class="btn btn-ai" type="button">AI Assist</button>
+          <div class="input-with-icon">
+            <span class="input-icon input-icon--small">✨</span>
+            <input id="ai-prompt" type="text" placeholder="Describe the schema you want, e.g. &quot;add a created_at timestamp column&quot;">
+          </div>
+          <button id="ai-btn" class="btn btn-ai" type="button"><span class="btn-icon">✨</span>AI Assist</button>
         </div>
 
-        <div class="form-row">
-          <div class="form-group">
-            <label for="path">Storage Path</label>
-            <input id="path" name="path" type="text" placeholder="s3://bucket/prefix or /local/path">
+        <section class="card settings-card">
+          <div class="card-head">
+            <span class="card-title">Storage &amp; Output Settings</span>
           </div>
-        </div>
 
-        <div class="form-row">
-          <div class="form-group form-group--range">
-            <label>Files &times; Rows</label>
-            <div class="range-row">
-              <input id="end_fileno" name="end_fileno" type="number" value="100" min="1">
-              <span class="range-sep">&times;</span>
-              <input id="rows" name="rows" type="number" value="60000" min="1">
-            </div>
-          </div>
-          <div class="form-group">
-            <label for="folders">Subdirs</label>
-            <input id="folders" name="folders" type="number" min="0" placeholder="0">
-          </div>
           <div class="form-group">
             <div class="label-row">
-              <label for="format">Format</label>
-              <span class="help-hint" id="format-options-btn">Options</span>
+              <label for="path">Storage Path</label>
+              <span class="help-icon-inline" title="S3 or local filesystem path where output files go">?</span>
             </div>
-            <select id="format" name="format">
-              <option value="csv">CSV</option>
-              <option value="parquet">Parquet</option>
-            </select>
-          </div>
-        </div>
-
-        <section class="card storage-card">
-          <div class="storage-row">
-            <span class="storage-label">Storage</span>
-            <div class="pill-group" role="radiogroup" aria-label="Storage provider">
-              <button type="button" class="pill pill--active" data-storage="aws">
-                <span class="pill-logo pill-logo--aws">aws</span>
-                <span>AWS</span>
-                <span class="pill-check"></span>
-              </button>
-              <button type="button" class="pill" data-storage="ksyun">
-                <span class="pill-logo pill-logo--ksyun">K</span>
-                <span>KsyunCloud</span>
-                <span class="pill-check"></span>
-              </button>
+            <div class="input-with-icon">
+              <span class="input-icon">📁</span>
+              <input id="path" name="path" type="text" placeholder="s3://bucket/prefix or /local/path">
             </div>
           </div>
 
-          <div class="storage-row">
-            <span class="storage-label">Execution</span>
-            <label class="toggle-label">
-              <input id="run-on-ec2" type="checkbox" checked>
-              <span class="toggle-slider"></span>
-              <span class="toggle-text">Run on EC2</span>
-            </label>
-            <span id="ec2-hint" class="cred-hint cred-hint--inline">&#9679; Task will run on a pre-configured EC2 instance with IAM role. No credentials needed.</span>
+          <div class="form-row">
+            <div class="form-group form-group--range">
+              <div class="label-row">
+                <label>Files &times; Rows</label>
+                <span class="help-icon-inline" title="Total files × rows per file">?</span>
+              </div>
+              <div class="range-row">
+                <input id="end_fileno" name="end_fileno" type="number" value="100" min="1">
+                <span class="range-sep">&times;</span>
+                <input id="rows" name="rows" type="number" value="60000" min="1">
+              </div>
+            </div>
+            <div class="form-group">
+              <div class="label-row">
+                <label for="folders">Subdirs</label>
+                <span class="help-icon-inline" title="Shard output across this many subdirectories">?</span>
+              </div>
+              <input id="folders" name="folders" type="number" min="0" placeholder="0">
+            </div>
+            <div class="form-group">
+              <div class="label-row">
+                <label for="format">Format</label>
+                <span class="help-hint" id="format-options-btn"><span class="help-icon">?</span> Options</span>
+              </div>
+              <select id="format" name="format">
+                <option value="csv">CSV</option>
+                <option value="parquet">Parquet</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="inner-box">
+            <div class="inner-box-title">Storage</div>
+            <div class="storage-row">
+              <span class="storage-label">Provider</span>
+              <div class="pill-group" role="radiogroup" aria-label="Storage provider">
+                <button type="button" class="pill pill--active" data-storage="aws">
+                  <span class="pill-logo pill-logo--aws">aws</span>
+                  <span>AWS</span>
+                  <span class="pill-check"></span>
+                </button>
+                <button type="button" class="pill" data-storage="ksyun">
+                  <span class="pill-logo pill-logo--ksyun">K</span>
+                  <span>KsyunCloud</span>
+                  <span class="pill-check"></span>
+                </button>
+              </div>
+            </div>
+            <div class="storage-row">
+              <span class="storage-label">Execution</span>
+              <label class="toggle-label">
+                <input id="run-on-ec2" type="checkbox" checked>
+                <span class="toggle-slider"></span>
+                <span class="toggle-text">Run on EC2</span>
+              </label>
+              <span id="ec2-hint" class="cred-hint cred-hint--inline">&#9679; Task will run on a pre-configured EC2 instance with IAM role. No credentials needed.</span>
+            </div>
           </div>
 
           <div id="aws-cred-fields" hidden>
@@ -155,8 +174,11 @@
             <span id="scaffoldStatus" class="hint"></span>
           </div>
           <div class="ai-assist">
-            <input id="gen-ai-prompt" type="text" placeholder="Describe custom logic, e.g. 'device_finger = sha256 of user_id first 12 hex chars'">
-            <button id="gen-ai-btn" class="btn btn-ai" type="button">AI Assist</button>
+            <div class="input-with-icon">
+              <span class="input-icon input-icon--small">✨</span>
+              <input id="gen-ai-prompt" type="text" placeholder="Describe custom logic, e.g. 'device_finger = sha256 of user_id first 12 hex chars'">
+            </div>
+            <button id="gen-ai-btn" class="btn btn-ai" type="button"><span class="btn-icon">✨</span>AI Assist</button>
           </div>
           <div id="generatorsEditor" class="generators-editor"></div>
         </details>
@@ -409,6 +431,6 @@ func CreatedAt(ctx *gen.Ctx) any {
     </div>
   </div>
 
-  <script src="/app.js?v=38"></script>
+  <script src="/app.js?v=39"></script>
 </body>
 </html>

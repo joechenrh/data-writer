@@ -398,7 +398,7 @@ textarea.invalid:focus {
   align-items: center;
   gap: 4px;
   font-size: 12px;
-  color: var(--text-tertiary);
+  color: var(--accent);
   cursor: pointer;
   text-decoration: underline;
   text-decoration-style: dashed;
@@ -407,25 +407,26 @@ textarea.invalid:focus {
 }
 
 .help-hint:hover {
-  color: var(--accent);
+  color: var(--accent-hover);
 }
 
 .help-hint:hover .help-icon {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--accent-hover);
+  color: var(--accent-hover);
   background: var(--accent-light);
 }
 
-.help-icon {
+.help-icon,
+.help-hint .help-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  border: 1px solid var(--border);
+  border: 1px solid var(--accent);
   background: var(--bg);
-  color: var(--text-tertiary);
+  color: var(--accent);
   font-size: 9px;
   font-weight: 700;
   flex-shrink: 0;
@@ -848,3 +849,130 @@ textarea.invalid:focus {
 
 /* ── Form actions ── */
 .form-actions { text-align: right; margin-top: 8px; margin-bottom: 8px; }
+
+/* ── Inline ? badges next to field labels ── */
+.help-icon-inline {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-left: 4px;
+  border-radius: 50%;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  background: var(--bg);
+  font-size: 9px;
+  font-weight: 700;
+  cursor: help;
+  user-select: none;
+}
+
+/* ── Input with a leading icon ── */
+.input-with-icon {
+  position: relative;
+}
+.input-with-icon input {
+  padding-left: 32px;
+}
+.input-with-icon .input-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--accent);
+  font-size: 14px;
+  pointer-events: none;
+}
+.input-with-icon .input-icon--small {
+  font-size: 12px;
+}
+
+/* ai-assist input wrapper fills remaining flex space */
+.ai-assist .input-with-icon {
+  flex: 1;
+  min-width: 0;
+}
+.ai-assist .input-with-icon input {
+  width: 100%;
+}
+
+/* ── Buttons with leading glyph ── */
+.btn .btn-icon {
+  margin-right: 6px;
+  color: inherit;
+}
+.btn-ghost .btn-icon {
+  color: var(--accent);
+}
+.btn-ai .btn-icon {
+  color: #fff;
+}
+
+/* ── Settings card outer + inner-box ── */
+.settings-card .inner-box {
+  background: #f7f9fc;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-top: 12px;
+}
+.settings-card .inner-box-title {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 10px;
+  color: var(--text-primary);
+}
+
+/* ── Storage row alignment inside inner-box ── */
+.inner-box .storage-row {
+  margin: 6px 0;
+}
+
+/* ── Generators chevron tinted ── */
+.generators-panel .chev {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+/* ── Pill visual parity with mockup ── */
+.pill {
+  min-width: 160px;
+  justify-content: flex-start;
+  padding: 8px 16px;
+  font-weight: 500;
+  background: #fff;
+}
+.pill-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 11px;
+  min-width: 28px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #fff7ea;
+}
+.pill-logo--aws {
+  color: #ff9900;
+  background: #fff7ea;
+}
+.pill-logo--ksyun {
+  color: #1f6feb;
+  background: #e9f1ff;
+}
+.pill-check {
+  margin-left: auto;
+  width: 16px;
+  height: 16px;
+}
+.pill--active .pill-check::after {
+  line-height: 16px;
+  width: 16px;
+}
+
+/* ── EC2 hint styling ── */
+.cred-hint--inline {
+  color: var(--text-secondary);
+}
