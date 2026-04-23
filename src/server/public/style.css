@@ -398,7 +398,7 @@ textarea.invalid:focus {
   align-items: center;
   gap: 4px;
   font-size: 12px;
-  color: var(--accent);
+  color: var(--blue);
   cursor: pointer;
   text-decoration: underline;
   text-decoration-style: dashed;
@@ -407,13 +407,13 @@ textarea.invalid:focus {
 }
 
 .help-hint:hover {
-  color: var(--accent-hover);
+  color: #2563eb;
 }
 
 .help-hint:hover .help-icon {
-  border-color: var(--accent-hover);
-  color: var(--accent-hover);
-  background: var(--accent-light);
+  border-color: #2563eb;
+  color: #2563eb;
+  background: var(--blue-light);
 }
 
 .help-icon,
@@ -424,9 +424,9 @@ textarea.invalid:focus {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  border: 1px solid var(--accent);
+  border: 1px solid var(--blue);
   background: var(--bg);
-  color: var(--accent);
+  color: var(--blue);
   font-size: 9px;
   font-weight: 700;
   flex-shrink: 0;
@@ -850,7 +850,7 @@ textarea.invalid:focus {
 /* ── Form actions ── */
 .form-actions { text-align: right; margin-top: 8px; margin-bottom: 8px; }
 
-/* ── Inline ? badges next to field labels ── */
+/* ── Inline ? badges next to field labels (blue, matches help-hint) ── */
 .help-icon-inline {
   display: inline-flex;
   align-items: center;
@@ -859,8 +859,8 @@ textarea.invalid:focus {
   height: 14px;
   margin-left: 4px;
   border-radius: 50%;
-  border: 1px solid var(--accent);
-  color: var(--accent);
+  border: 1px solid var(--blue);
+  color: var(--blue);
   background: var(--bg);
   font-size: 9px;
   font-weight: 700;
@@ -880,7 +880,7 @@ textarea.invalid:focus {
   left: 10px;
   top: 50%;
   transform: translateY(-50%);
-  color: var(--accent);
+  color: var(--blue);
   font-size: 14px;
   pointer-events: none;
 }
@@ -903,7 +903,7 @@ textarea.invalid:focus {
   color: inherit;
 }
 .btn-ghost .btn-icon {
-  color: var(--accent);
+  color: var(--blue);
 }
 .btn-ai .btn-icon {
   color: #fff;
@@ -929,9 +929,9 @@ textarea.invalid:focus {
   margin: 6px 0;
 }
 
-/* ── Generators chevron tinted ── */
+/* ── Generators chevron tinted blue ── */
 .generators-panel .chev {
-  color: var(--accent);
+  color: var(--blue);
   font-weight: 700;
 }
 
