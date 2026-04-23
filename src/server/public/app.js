@@ -571,11 +571,16 @@ async function runGenAi() {
 
     if (!res.ok) {
       let msg = 'AI error: ' + res.status;
+      let fallback = null;
       try {
         const errData = await res.json();
         if (errData.error) msg = errData.error;
+        if (errData.generators_go) fallback = errData.generators_go;
       } catch (_) { /* ignore */ }
       alert(msg);
+      if (fallback && goEditor) {
+        goEditor.setValue(fallback); // user can inspect / fix manually
+      }
       return;
     }
     const data = await res.json();
