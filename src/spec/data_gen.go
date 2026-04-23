@@ -255,7 +255,15 @@ func commitBuiltinValue(buf *gen.RowBuffer, c *ColumnSpec, v any, def int16) {
 	case string:
 		buf.SetString(idx, c.OrigName, x)
 	case int:
-		buf.SetInt64(idx, c.OrigName, int64(x))
+		// generate() returns native Go `int` for narrow int columns
+		// (TINYINT/SMALLINT/MEDIUMINT/INT/YEAR) AND for BIGINT. Split on
+		// the parquet storage type so ctx.Int32("c") works for INT columns
+		// and ctx.Int64("c") works for BIGINT.
+		if c.Type == parquet.Types.Int32 {
+			buf.SetInt32(idx, c.OrigName, int32(x))
+		} else {
+			buf.SetInt64(idx, c.OrigName, int64(x))
+		}
 	case int64:
 		buf.SetInt64(idx, c.OrigName, x)
 	case int32:

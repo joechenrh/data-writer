@@ -223,34 +223,29 @@ func handleCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Try to cancel a pending task directly in DB.
+	// Mark task as cancelled in DB. Covers pending, launching (claimed by an
+	// EC2 launcher but no worker yet), and running (in-process local OR on an
+	// EC2 worker) states. EC2 workers poll task state and exit when they see
+	// 'failed'.
 	tag, err := DB.Exec(r.Context(),
 		`UPDATE tasks SET state = 'failed', error = 'cancelled', updated_at = now()
-		 WHERE id = $1 AND state = 'pending'`, id)
+		 WHERE id = $1 AND state IN ('pending', 'launching', 'running')`, id)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "db error: " + err.Error()})
 		return
 	}
-	if tag.RowsAffected() > 0 {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled"})
+	if tag.RowsAffected() == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "task is not pending, launching, or running"})
 		return
 	}
 
-	// Try to cancel a running task.
+	// If the task is running locally on this server, cancel its context too so
+	// the in-process generator stops immediately (instead of only on next poll).
 	runningMu.Lock()
 	isActive := fmt.Sprintf("%d", runningID) == id
 	cancel := runningCancel
 	runningMu.Unlock()
-
-	if !isActive {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "task is not pending or running"})
-		return
-	}
-
-	// Mark as failed in DB, then cancel the context.
-	DB.Exec(r.Context(),
-		`UPDATE tasks SET state = 'failed', error = 'cancelled', updated_at = now() WHERE id = $1`, id)
-	if cancel != nil {
+	if isActive && cancel != nil {
 		cancel()
 	}
 
