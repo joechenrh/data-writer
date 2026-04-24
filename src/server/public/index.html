@@ -103,8 +103,13 @@
             <div class="inner-box-title">Storage</div>
             <div class="storage-row">
               <span class="storage-label">Provider</span>
-              <span class="help-icon-inline" data-tooltip="Object store for output files. AWS writes to S3; KsyunCloud uses the server-configured Ksyun KEY.">?</span>
+              <span class="help-icon-inline" data-tooltip="Local: write to this server's filesystem. AWS: write to S3. KsyunCloud: write to Ksyun using the server-configured KEY.">?</span>
               <div class="pill-group" role="radiogroup" aria-label="Storage provider">
+                <button type="button" class="pill" data-storage="local">
+                  <span class="pill-logo pill-logo--local">💻</span>
+                  <span>Local</span>
+                  <span class="pill-check"></span>
+                </button>
                 <button type="button" class="pill pill--active" data-storage="aws">
                   <span class="pill-logo pill-logo--aws">aws</span>
                   <span>AWS</span>
@@ -117,30 +122,18 @@
                 </button>
               </div>
             </div>
-          </div>
 
-          <div class="form-group exec-group">
-            <div class="label-row">
-              <label>Execution</label>
-              <span class="help-icon-inline" data-tooltip="Local: run on this server. EC2: launch a spot worker with IAM role.">?</span>
+            <!-- EC2 toggle: only meaningful when AWS is the storage provider. -->
+            <div class="storage-row" id="ec2-toggle-row">
+              <span class="storage-label">EC2</span>
+              <label class="toggle-label">
+                <input id="run-on-ec2" type="checkbox" checked>
+                <span class="toggle-slider"></span>
+                <span class="toggle-text">Run on EC2</span>
+              </label>
+              <span id="ec2-hint" class="cred-hint cred-hint--inline">&#9679; Task will run on a pre-configured EC2 instance with IAM role. No credentials needed.</span>
             </div>
-            <div class="pill-group" role="radiogroup" aria-label="Execution target">
-              <button type="button" class="pill" data-exec="local">
-                <span class="pill-logo pill-logo--local">💻</span>
-                <span>Local</span>
-                <span class="pill-check"></span>
-              </button>
-              <button type="button" class="pill pill--active" data-exec="ec2">
-                <span class="pill-logo pill-logo--ec2">☁</span>
-                <span>EC2</span>
-                <span class="pill-check"></span>
-              </button>
-            </div>
-            <span id="ec2-hint" class="cred-hint cred-hint--inline">&#9679; Task will run on a pre-configured EC2 instance with IAM role. No credentials needed.</span>
           </div>
-
-          <!-- Backing hidden checkbox so existing buildRequestBody logic still works. -->
-          <input type="checkbox" id="run-on-ec2" hidden checked>
 
           <div id="aws-cred-fields" hidden>
             <div class="form-row">

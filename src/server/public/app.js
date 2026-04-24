@@ -83,29 +83,36 @@ document.querySelectorAll('.pill[data-storage]').forEach((btn) => {
   });
 });
 
-// ── Execution target pill selector (Local / EC2) ──
+// ── EC2 toggle change ──
 
 const ec2Checkbox = document.getElementById('run-on-ec2');
-document.querySelectorAll('.pill[data-exec]').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    const isEc2 = btn.dataset.exec === 'ec2';
-    ec2Checkbox.checked = isEc2;
-    document.querySelectorAll('.pill[data-exec]').forEach((b) => {
-      b.classList.toggle('pill--active', b === btn);
-    });
-    updateCredFields();
-  });
-});
+ec2Checkbox.addEventListener('change', updateCredFields);
 
-// ── Credential field toggling ──
-
+// ── Credential / execution visibility ──
+//
+// Storage pills: Local | AWS | KsyunCloud.
+// - Local   → no creds, no EC2 row, task runs locally (target=local).
+// - AWS     → EC2 toggle visible; when ON → hint shown, cred fields hidden
+//             (IAM role); when OFF → cred inputs shown.
+// - Ksyun   → server-side env key; show ksyun hint; EC2 row hidden (we
+//             don't ship Ksyun-compatible workers).
 function updateCredFields() {
-  const isAws = storageType.value === 'aws';
-  const isEc2 = ec2Checkbox.checked;
-  ksyunFields.hidden = isAws;
-  awsCredFields.hidden = isEc2 || !isAws;
+  const provider = storageType.value;  // 'local' | 'aws' | 'ksyun'
+  const isAws = provider === 'aws';
+  const isKsyun = provider === 'ksyun';
+  const isEc2 = ec2Checkbox.checked && isAws;
+
+  // Provider-specific cred blocks.
+  awsCredFields.hidden = !isAws || isEc2;
+  ksyunFields.hidden = !isKsyun;
+
+  // EC2 row — only meaningful for AWS.
+  document.getElementById('ec2-toggle-row').hidden = !isAws;
   document.getElementById('ec2-hint').hidden = !isEc2;
 }
+
+// Initial sync.
+updateCredFields();
 
 // ── Monaco SQL editor ──
 
@@ -211,9 +218,10 @@ function buildRequestBody() {
     body.folders = parseInt(foldersVal, 10) || 0;
   }
 
-  // Send target=ec2 when checkbox is checked and path is S3.
-  const isRemotePath = path.toLowerCase().startsWith('s3://');
-  if (isRemotePath && document.getElementById('run-on-ec2').checked) {
+  // target=ec2 is only meaningful when storage is AWS AND the EC2 toggle is on.
+  // Local and Ksyun providers always run locally; their target stays default.
+  const provider = storageType.value;
+  if (provider === 'aws' && document.getElementById('run-on-ec2').checked) {
     body.target = 'ec2';
   }
 
@@ -232,13 +240,12 @@ function buildRequestBody() {
     };
   }
 
-  // Storage credentials — always evaluate based on pill selection + EC2 state.
-  const isKsyun = storageType.value === 'ksyun';
+  // Storage credentials — only send for AWS (without EC2 IAM) or Ksyun.
+  // Local provider sends no creds at all.
   const isEc2 = document.getElementById('run-on-ec2').checked;
-  if (isKsyun) {
+  if (provider === 'ksyun') {
     body.ksyun = true;
-  } else if (!isEc2) {
-    // AWS with explicit credentials (EC2 IAM role not in use).
+  } else if (provider === 'aws' && !isEc2) {
     body.s3 = {
       region: document.getElementById('s3_region').value,
       provider: document.getElementById('s3_provider').value,
