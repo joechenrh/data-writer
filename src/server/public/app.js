@@ -5,6 +5,7 @@ const submitBtn = document.getElementById('submit-btn');
 const pathInput = document.getElementById('path');
 const storageType = document.getElementById('storage_type');
 const ksyunFields = document.getElementById('ksyun-fields');
+const awsCredFields = document.getElementById('aws-cred-fields');
 
 const aiPromptInput = document.getElementById('ai-prompt');
 const aiBtn = document.getElementById('ai-btn');
@@ -70,13 +71,26 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && formatModal.classList.contains('open')) closeFormatModal();
 });
 
-// ── Storage pill selector ──
+// ── Storage provider pill selector ──
 
 document.querySelectorAll('.pill[data-storage]').forEach((btn) => {
   btn.addEventListener('click', () => {
-    const val = btn.dataset.storage;
-    storageType.value = val;
+    storageType.value = btn.dataset.storage;
     document.querySelectorAll('.pill[data-storage]').forEach((b) => {
+      b.classList.toggle('pill--active', b === btn);
+    });
+    updateCredFields();
+  });
+});
+
+// ── Execution target pill selector (Local / EC2) ──
+
+const ec2Checkbox = document.getElementById('run-on-ec2');
+document.querySelectorAll('.pill[data-exec]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const isEc2 = btn.dataset.exec === 'ec2';
+    ec2Checkbox.checked = isEc2;
+    document.querySelectorAll('.pill[data-exec]').forEach((b) => {
       b.classList.toggle('pill--active', b === btn);
     });
     updateCredFields();
@@ -86,23 +100,12 @@ document.querySelectorAll('.pill[data-storage]').forEach((btn) => {
 // ── Credential field toggling ──
 
 function updateCredFields() {
-  const isKsyun = storageType.value === 'ksyun';
-  ksyunFields.hidden = !isKsyun;
-  updateEc2Toggle();
-}
-
-function updateEc2Toggle() {
-  const ec2Checkbox = document.getElementById('run-on-ec2');
-  const ec2Hint = document.getElementById('ec2-hint');
-  const awsCredFields = document.getElementById('aws-cred-fields');
-  if (!ec2Checkbox) return;
-  const isEc2 = ec2Checkbox.checked;
   const isAws = storageType.value === 'aws';
-  ec2Hint.hidden = !isEc2;                      // hint only when EC2 on
-  awsCredFields.hidden = isEc2 || !isAws;       // creds hidden on EC2 or non-AWS
+  const isEc2 = ec2Checkbox.checked;
+  ksyunFields.hidden = isAws;
+  awsCredFields.hidden = isEc2 || !isAws;
+  document.getElementById('ec2-hint').hidden = !isEc2;
 }
-
-document.getElementById('run-on-ec2').addEventListener('change', updateEc2Toggle);
 
 // ── Monaco SQL editor ──
 
@@ -143,7 +146,7 @@ const INSERT_EXAMPLE_SQL = `CREATE TABLE test.sbtest (
   c CHAR(120) NOT NULL DEFAULT '' COMMENT 'max_length=120, min_length=120',
   pad CHAR(60) NOT NULL DEFAULT '' COMMENT 'max_length=60, min_length=60',
   score INT COMMENT 'mean=100, stddev=15',
-  rank INT COMMENT 'order=partial_order',
+  priority INT COMMENT 'order=partial_order',
   status VARCHAR(10) COMMENT 'set=["active","inactive","pending"]',
   text_col TEXT DEFAULT NULL COMMENT 'max_length=20000, compress=40',
   nullable_col INT COMMENT 'null_percent=30'
@@ -489,7 +492,7 @@ form.addEventListener('submit', async (e) => {
 });
 
 // ── Initial state ──
-updateEc2Toggle();
+updateCredFields();
 loadTasks();
 
 // ── Custom generators panel ──

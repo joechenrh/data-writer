@@ -787,7 +787,7 @@ textarea.invalid:focus {
   padding: 6px 14px;
   background: #fff;
   border: 1px solid var(--border);
-  border-radius: 24px;
+  border-radius: 8px;
   cursor: pointer;
   font-size: 13px;
   transition: all 0.15s ease;
@@ -866,6 +866,33 @@ textarea.invalid:focus {
   font-weight: 700;
   cursor: help;
   user-select: none;
+  position: relative;
+}
+.help-icon-inline::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  white-space: normal;
+  width: max-content;
+  max-width: 280px;
+  padding: 8px 10px;
+  background: #1f2937;
+  color: #fff;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+  z-index: 100;
+}
+.help-icon-inline:hover::after,
+.help-icon-inline:focus::after {
+  opacity: 1;
 }
 
 /* ── Input with a leading icon ── */
@@ -962,6 +989,8 @@ textarea.invalid:focus {
   color: #1f6feb;
   background: #e9f1ff;
 }
+.pill-logo--local { color: #6366f1; background: #eef2ff; }
+.pill-logo--ec2   { color: #ff9900; background: #fff7ea; }
 .pill-check {
   margin-left: auto;
   width: 16px;
@@ -974,5 +1003,6 @@ textarea.invalid:focus {
 
 /* ── EC2 hint styling ── */
 .cred-hint--inline {
-  color: var(--text-secondary);
+  color: #111;    /* explicit black so ● bullet is not green/gray */
+  font-size: 12px;
 }
