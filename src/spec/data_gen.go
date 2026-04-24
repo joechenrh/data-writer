@@ -174,8 +174,17 @@ func (c *ColumnSpec) generate(rowID int, rng *rand.Rand) (any, int16) {
 	}
 
 	switch c.SQLType {
-	case "int", "tinyint", "smallint", "mediumint", "decimal":
+	case "int", "tinyint", "smallint", "mediumint":
 		return c.generateInt(rowID, rng), 1
+	case "decimal":
+		// For CSV output: emit formatted decimal with the scale's decimal point
+		// (e.g. 123.45 for DECIMAL(5,2)). Precision-bounded unscaled value.
+		if c.Precision <= 18 {
+			v := generateDecimalUnscaledInt64(rng, c.Precision, c.Signed)
+			return formatDecimal(v, c.Scale), 1
+		}
+		v := generateDecimalUnscaledBig(rng, c.Precision, c.Signed)
+		return formatDecimalBig(v, c.Scale), 1
 	case "bigint", "double", "float":
 		return c.generateInt(rowID, rng), 1
 	case "char", "varchar", "varbinary", "blob", "text", "tinyblob":
@@ -297,7 +306,8 @@ func (c *ColumnSpec) generateDecimalInt32Parquet(_ int, out []int32, defLevel []
 			defLevel[i] = 0
 		} else {
 			defLevel[i] = 1
-			out[i] = int32(c.generateRandomInt(rng))
+			// Precision-bounded unscaled value. For precision<=9 this fits int32.
+			out[i] = int32(generateDecimalUnscaledInt64(rng, c.Precision, c.Signed))
 		}
 	}
 }
@@ -309,7 +319,7 @@ func (c *ColumnSpec) generateDecimalInt64Parquet(_ int, out []int64, defLevel []
 			defLevel[i] = 0
 		} else {
 			defLevel[i] = 1
-			out[i] = int64(c.generateRandomInt(rng))
+			out[i] = generateDecimalUnscaledInt64(rng, c.Precision, c.Signed)
 		}
 	}
 }
@@ -325,38 +335,43 @@ func (c *ColumnSpec) generateDecimalFixedLenParquet(_ int, out []parquet.FixedLe
 		if len(c.IntSet) > 0 {
 			out[i] = fixedLenDecimalFromInt64(c.IntSet[rng.Intn(len(c.IntSet))], c.TypeLen)
 		} else {
-			out[i] = generateDecimalBytes(c.TypeLen, rng)
+			out[i] = fixedLenDecimalFromBig(generateDecimalUnscaledBig(rng, c.Precision, c.Signed), c.TypeLen)
 		}
 	}
 }
 
 func fixedLenDecimalFromInt64(unscaled int64, byteLen int) parquet.FixedLenByteArray {
-	// Parquet DECIMAL in fixed-len byte array: two's-complement big-endian.
-	v := big.NewInt(unscaled)
-	b := v.Bytes()
+	return fixedLenDecimalFromBig(big.NewInt(unscaled), byteLen)
+}
+
+// fixedLenDecimalFromBig encodes a big.Int unscaled decimal value as a
+// two's-complement big-endian fixed-length byte array, per the Parquet
+// DECIMAL logical type spec.
+func fixedLenDecimalFromBig(v *big.Int, byteLen int) parquet.FixedLenByteArray {
+	neg := v.Sign() < 0
+	abs := new(big.Int).Abs(v)
+	b := abs.Bytes()
+
+	if neg {
+		// Two's complement: (2^(8*byteLen) + v) as bytes.
+		mod := new(big.Int).Lsh(big.NewInt(1), uint(8*byteLen))
+		twos := new(big.Int).Add(mod, v) // v is negative, so this is mod - |v|
+		b = twos.Bytes()
+	}
+
 	if len(b) > byteLen {
 		b = b[len(b)-byteLen:]
 	}
 	padded := make([]byte, byteLen)
-	copy(padded[byteLen-len(b):], b)
-
-	if unscaled < 0 {
-		for i := 0; i < byteLen-len(b); i++ {
-			padded[i] = 0xFF
-		}
+	fill := byte(0)
+	if neg {
+		fill = 0xFF
 	}
-
+	for i := 0; i < byteLen-len(b); i++ {
+		padded[i] = fill
+	}
+	copy(padded[byteLen-len(b):], b)
 	return padded
-}
-
-// generateDecimalBytes generates a fixed-length byte array for a decimal value.
-// Currently, we don't take precision into consideration and just fill with
-// random bytes.
-func generateDecimalBytes(byteLen int, rng *rand.Rand) parquet.FixedLenByteArray {
-	buf := make([]byte, byteLen)
-	fillLength := min(byteLen, 32)
-	rng.Read(buf[fillLength:])
-	return buf
 }
 
 func (c *ColumnSpec) generateInt32Parquet(rowID int, out []int32, defLevel []int16, rng *rand.Rand) {
