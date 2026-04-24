@@ -437,6 +437,15 @@ func generateParquetCommon(
 		return errors.Trace(err)
 	}
 	pw.Close()
+	// arrow-go's file.Writer.Close writes the footer via wrapper.Write, but
+	// doesn't invoke the streaming flush path. For streaming output the
+	// residual buffer (which contains the footer bytes) must be explicitly
+	// emitted as the final chunk or the file ends truncated.
+	if spw, ok := wrapper.Writer.(*streamingParquetWriter); ok {
+		if err := spw.Close(context.Background()); err != nil {
+			return errors.Trace(err)
+		}
+	}
 	return nil
 }
 
