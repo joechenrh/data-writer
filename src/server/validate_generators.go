@@ -59,7 +59,7 @@ func handleValidateGenerators(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if out, err := runIn(serverWorkspace, "go", "build", "-o", "/dev/null", "./src"); err != nil {
+	if out, err := runIn(serverWorkspace, "go", "build", "-o", "/dev/null", "./cmd/mockingbird-worker"); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "go build failed:\n" + out})
 		return
 	}

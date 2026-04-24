@@ -39,9 +39,8 @@ Your Machine (Web UI)              AWS (us-east-1)
 ### Worker (c5.2xlarge, spot one-time)
 - Launched automatically by launcher with `-task-id`, `-shard`, `-shard-total`
   flags baked into a per-launch user-data script.
-- Downloads data-writer binary from S3.
-- Runs `-worker -task-id=X -shard=Y -shard-total=N`: loads the assigned task,
-  computes its file slice, and generates only that slice.
+- Runs `mockingbird-worker run -task-id=X -shard=Y -shard-total=N`: loads the
+  assigned task, computes its file slice, and generates only that slice.
 - Multiple shards run concurrently across instances and contribute additive
   progress updates to the same task row. The last worker to finish flips the
   task state to `completed`.
@@ -51,7 +50,7 @@ Your Machine (Web UI)              AWS (us-east-1)
 
 ### Claim protocol
 
-`data-writer -claim-task` prints one of:
+`mockingbird-worker claim` prints one of:
 - `<task_id> <shard_idx> <shard_total>` — one shard reserved; spawn a worker.
 - `0` — no work available right now.
 
@@ -137,12 +136,12 @@ aws ec2 run-instances --profile pingcap --region us-east-1 \
   --query "Instances[0].InstanceId" --output text
 ```
 
-### Update data-writer binary
+### Update mockingbird-worker binary
 ```bash
 # Cross-compile
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/data-writer-linux ./src/
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/mockingbird-worker-linux ./cmd/mockingbird-worker
 # Upload
-aws s3 cp /tmp/data-writer-linux s3://m-poc-dataset/tools/data-writer --profile pingcap --region us-east-1
+aws s3 cp /tmp/mockingbird-worker-linux s3://m-poc-dataset/tools/mockingbird-worker --profile pingcap --region us-east-1
 # Restart launcher to pick up new binary
 ```
 
@@ -164,6 +163,8 @@ aws s3 cp /tmp/data-writer-linux s3://m-poc-dataset/tools/data-writer --profile 
 | `src/server/worker.go` | Worker mode + check-pending |
 | `src/server/server.go` | Task worker + DB schema |
 | `src/server/handler.go` | API handlers (create with target) |
+| `cmd/mockingbird-worker/main.go` | Worker binary entrypoint |
+| `cmd/mockingbird/main.go` | Server binary entrypoint |
 
 ## AWS Resources
 

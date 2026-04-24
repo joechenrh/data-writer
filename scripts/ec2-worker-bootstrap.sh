@@ -3,13 +3,13 @@
 #
 # Runs on the c5.2xlarge worker instance at boot. Replaces (or wraps) the
 # existing prebuilt-binary flow with: claim task, fetch generators_go,
-# (if non-empty) rebuild data-writer with user code, run the shard.
+# (if non-empty) rebuild mockingbird-worker with user code, run the shard.
 #
 # Prerequisites (baked into AMI — see docs/ec2-worker-ami.md):
 #   - /opt/data-writer: git-clone of data-writer source
-#   - /opt/data-writer/bin/data-writer: baseline prebuilt binary (no user code)
+#   - /opt/data-writer/bin/mockingbird-worker: baseline prebuilt binary (no user code)
 #   - Go toolchain on PATH (version matches go.mod)
-#   - $GOCACHE pre-warmed via `go build ./src` during AMI bake
+#   - $GOCACHE pre-warmed via `go build ./cmd/mockingbird-worker` during AMI bake
 #   - $DSN: pgx connection string (passed via cloud-init environment or user-data)
 #   - $TASK_ID, $SHARD, $SHARD_TOTAL: passed via user-data (baked by launcher per-worker)
 set -euo pipefail
@@ -23,19 +23,19 @@ cd /opt/data-writer
 : "${SHARD_TOTAL:?SHARD_TOTAL env var is required}"
 
 # 1. Dump generators_go to src/user/user_gens.go (empty = no user code).
-./bin/data-writer -dump-generators -dsn "$DSN" -task-id "$TASK_ID" > src/user/user_gens.go.new
+./bin/mockingbird-worker dump-generators -dsn "$DSN" -task-id "$TASK_ID" > src/user/user_gens.go.new
 
 if [[ -s src/user/user_gens.go.new ]]; then
   mv src/user/user_gens.go.new src/user/user_gens.go
 
   # 2. Generate init() registration + rebuild.
   if ! go run ./cmd/codegen -in ./src/user -out ./src/user/registry_gen.go 2> /tmp/build.err; then
-    ./bin/data-writer -report-failure -dsn "$DSN" -task-id "$TASK_ID" -err-file /tmp/build.err
+    ./bin/mockingbird-worker report-failure -dsn "$DSN" -task-id "$TASK_ID" -err-file /tmp/build.err
     shutdown -h now
     exit 1
   fi
-  if ! go build -o ./bin/data-writer ./src 2> /tmp/build.err; then
-    ./bin/data-writer -report-failure -dsn "$DSN" -task-id "$TASK_ID" -err-file /tmp/build.err
+  if ! go build -o ./bin/mockingbird-worker ./cmd/mockingbird-worker 2> /tmp/build.err; then
+    ./bin/mockingbird-worker report-failure -dsn "$DSN" -task-id "$TASK_ID" -err-file /tmp/build.err
     shutdown -h now
     exit 1
   fi
@@ -45,7 +45,7 @@ else
 fi
 
 # 3. Run the shard with the binary (either prebuilt or freshly built).
-./bin/data-writer -worker -dsn "$DSN" -task-id "$TASK_ID" \
+./bin/mockingbird-worker run -dsn "$DSN" -task-id "$TASK_ID" \
   -shard "$SHARD" -shard-total "$SHARD_TOTAL"
 
 # 4. Shut down so the instance auto-terminates (matches existing worker behavior).

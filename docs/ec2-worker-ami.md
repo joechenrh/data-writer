@@ -7,8 +7,8 @@ and how the existing launcher must adapt.
 ## What changes
 
 Previously, the worker AMI only needed `awscli` to download a prebuilt
-`data-writer` binary from S3. With user-generator support, the worker may
-need to recompile `data-writer` on boot with the user's `.go` file linked
+`mockingbird-worker` binary from S3. With user-generator support, the worker may
+need to recompile `mockingbird-worker` on boot with the user's `.go` file linked
 in, so the AMI must include:
 
 1. **Go toolchain** — version matches the project's `go.mod`.
@@ -28,25 +28,24 @@ in, so the AMI must include:
    finish in seconds, not 30 seconds:
    ```bash
    cd /opt/data-writer
-   go build ./src        # warms the cache
+   go build ./cmd/mockingbird-worker   # warms the cache
    go run ./cmd/codegen -in ./src/user -out ./src/user/registry_gen.go
-   # Now `go build ./src` is ~1–2 s on top of that warm cache.
+   # Now `go build ./cmd/mockingbird-worker` is ~1–2 s on top of that warm cache.
    ```
 
-4. **Baseline binary at `/opt/data-writer/bin/data-writer`** — a prebuilt
+4. **Baseline binary at `/opt/data-writer/bin/mockingbird-worker`** — a prebuilt
    binary with NO user code linked in. Used for:
-   - `-claim-task` / `-dump-generators` / `-report-failure` before any
-     rebuild happens.
+   - `dump-generators` / `report-failure` before any rebuild happens.
    - Running tasks that have no `generators_go` set (skips rebuild entirely).
 
    ```bash
-   go build -o /opt/data-writer/bin/data-writer ./src
+   go build -o /opt/data-writer/bin/mockingbird-worker ./cmd/mockingbird-worker
    ```
 
 ## Launcher changes
 
 The existing launcher (t3.micro, `/tmp/ec2-launcher.sh`) pokes out per-worker
-user-data that historically did `aws s3 cp ... data-writer && ./data-writer -worker ...`.
+user-data that historically did `aws s3 cp ... mockingbird-worker && ./mockingbird-worker run ...`.
 
 To pick up the new flow, change the per-worker user-data to invoke
 `scripts/ec2-worker-bootstrap.sh` with `DSN`, `TASK_ID`, `SHARD`, `SHARD_TOTAL`
@@ -62,7 +61,7 @@ export SHARD_TOTAL=$ST
 exec /opt/data-writer/scripts/ec2-worker-bootstrap.sh
 ```
 
-(Replace the S3-download of `data-writer` from the old user-data template —
+(Replace the S3-download of `mockingbird-worker` from the old user-data template —
 the AMI now carries both source and baseline binary.)
 
 ## Cost implications
@@ -75,8 +74,8 @@ the AMI now carries both source and baseline binary.)
 ## Fallback
 
 If the AMI is reverted to the old image and a task has `generators_go`
-set, the worker will fail early at step 1 (missing `bin/data-writer` with
-the new `-dump-generators` subcommand) and the task will stall in
+set, the worker will fail early at step 1 (missing `bin/mockingbird-worker` with
+the `dump-generators` subcommand) and the task will stall in
 `launching`. The dispatch server (not this worker) should be conservative
 and require `target=ec2` — which it already does for any task with
 `generators_go`, so the only way to hit this failure is a mis-matched AMI.
