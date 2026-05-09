@@ -66,3 +66,28 @@ func TestCSVUserTimeGeneratorFormats(t *testing.T) {
 		t.Fatalf("csv row = %q; want %q", got, want)
 	}
 }
+
+// TestCSVUserTimeSiblingRead verifies that a later user generator can read an
+// earlier TIMESTAMP/DATETIME/DATE column via ctx.Time(col). Regression for the
+// "stored as int64, ctx.Time expects time.Time" panic.
+func TestCSVUserTimeSiblingRead(t *testing.T) {
+	t.Cleanup(gen.ResetForTest)
+	target := time.Date(2026, 4, 21, 12, 34, 0, 0, time.UTC)
+	gen.Register("ts", func(c *gen.Ctx) any { return target })
+	gen.Register("tag", func(c *gen.Ctx) any {
+		return "at_" + c.Time("ts").UTC().Format("15:04")
+	})
+
+	specs := []*spec.ColumnSpec{
+		{OrigName: "ts", SQLType: "datetime"},
+		{OrigName: "tag", SQLType: "varchar"},
+	}
+
+	rng := rand.New(rand.NewSource(1))
+	buf := make([]byte, 0, 128)
+	buf = generateCSVRow(specs, 0, false, rng, buf, []byte(","), []byte("\n"))
+	got := string(buf)
+	if !strings.Contains(got, "at_12:34") {
+		t.Fatalf("csv row = %q; want it to contain at_12:34", got)
+	}
+}

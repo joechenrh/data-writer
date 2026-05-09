@@ -156,16 +156,11 @@ func (c *ColumnSpec) generateJSON(_ *rand.Rand) string {
 	return "[1,2,3,4,5]"
 }
 
-func (c *ColumnSpec) generateRandomTime(format string, rng *rand.Rand) string {
+func (c *ColumnSpec) generateRandomTime(rng *rand.Rand) time.Time {
 	now := time.Now()
-
 	oneYearAgo := now.AddDate(-1, 0, 0)
-
 	randomDuration := time.Duration(rng.Int63n(int64(now.Sub(oneYearAgo))))
-
-	randomTime := oneYearAgo.Add(randomDuration)
-
-	return randomTime.Format(format)
+	return oneYearAgo.Add(randomDuration)
 }
 
 func (c *ColumnSpec) generate(rowID int, rng *rand.Rand) (any, int16) {
@@ -191,12 +186,8 @@ func (c *ColumnSpec) generate(rowID int, rng *rand.Rand) (any, int16) {
 		return c.generateString(rng), 1
 	case "json":
 		return c.generateJSON(rng), 1
-	case "timestamp", "datetime":
-		return c.generateRandomTime(time.DateTime, rng), 1
-	case "date":
-		return c.generateRandomTime(time.DateOnly, rng), 1
-	case "time":
-		return c.generateRandomTime(time.TimeOnly, rng), 1
+	case "timestamp", "datetime", "time", "date":
+		return c.generateRandomTime(rng), 1
 	case "year":
 		return rng.Intn(70) + 1970, 1
 	}
@@ -244,6 +235,8 @@ func commitUserValue(buf *gen.RowBuffer, c *ColumnSpec, out any) {
 		buf.SetFloat64(idx, c.OrigName, x)
 	case string:
 		buf.SetString(idx, c.OrigName, x)
+	case time.Time:
+		buf.SetTime(idx, c.OrigName, x)
 	default:
 		panic(fmt.Sprintf("commitUserValue: unsupported type %T for column %q", x, c.OrigName))
 	}
@@ -281,6 +274,8 @@ func commitBuiltinValue(buf *gen.RowBuffer, c *ColumnSpec, v any, def int16) {
 		buf.SetFloat64(idx, c.OrigName, x)
 	case float32:
 		buf.SetFloat64(idx, c.OrigName, float64(x))
+	case time.Time:
+		buf.SetTime(idx, c.OrigName, x)
 	default:
 		panic(fmt.Sprintf("commitBuiltinValue: unsupported type %T for column %q", x, c.OrigName))
 	}
@@ -607,6 +602,16 @@ func (c *ColumnSpec) fillParquetRowUser(rowID, idx int, valueBuffer any, defLeve
 	if def == 0 {
 		return nil
 	}
+	// time-typed columns are stored as time.Time in RowBuffer for sibling-read
+	// support; convert to parquet's wire form (int64 μs / int32 days) here.
+	if t, ok := v.(time.Time); ok {
+		switch c.SQLType {
+		case "timestamp", "datetime", "time":
+			v = t.UnixMicro()
+		case "date":
+			v = int32(t.UTC().Unix() / 86400)
+		}
+	}
 	switch c.Type {
 	case parquet.Types.Int32:
 		valueBuffer.([]int32)[idx] = toInt32(v)
@@ -742,28 +747,19 @@ func GenerateSingleField(rowID int, spec *ColumnSpec, rng *rand.Rand) string {
 }
 
 // GenerateSingleFieldUser is like GenerateSingleField but threads a RowBuffer
-// through so user generators can read sibling columns. Time columns whose
-// user generators return time.Time will be normalized to int64/int32 by
-// NormalizeUserValue; this function formats them back to the CSV string
-// form expected by downstream writers.
+// through so user generators can read sibling columns. Time columns are stored
+// as time.Time in the buffer; CSV formatting happens here at the boundary.
 func GenerateSingleFieldUser(rowID int, spec *ColumnSpec, rng *rand.Rand, buf *gen.RowBuffer) string {
 	v, _ := spec.generateWithUser(rowID, rng, buf)
 
-	// Time columns are normalized to int64 μs / int32 days for the parquet
-	// path. For CSV we need a formatted string that matches the builtin
-	// behavior (see generateRandomTime).
-	switch spec.SQLType {
-	case "timestamp", "datetime":
-		if i, ok := v.(int64); ok {
-			return time.UnixMicro(i).Format(time.DateTime)
-		}
-	case "time":
-		if i, ok := v.(int64); ok {
-			return time.UnixMicro(i).Format(time.TimeOnly)
-		}
-	case "date":
-		if i, ok := v.(int32); ok {
-			return time.Unix(int64(i)*86400, 0).UTC().Format(time.DateOnly)
+	if t, ok := v.(time.Time); ok {
+		switch spec.SQLType {
+		case "timestamp", "datetime":
+			return t.Format(time.DateTime)
+		case "time":
+			return t.Format(time.TimeOnly)
+		case "date":
+			return t.Format(time.DateOnly)
 		}
 	}
 

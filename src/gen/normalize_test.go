@@ -38,26 +38,38 @@ func TestNormalizeNil(t *testing.T) {
 	}
 }
 
-func TestNormalizeTimeToParquetInt64(t *testing.T) {
-	in := time.Unix(1_700_000_000, 123_000).UTC() // 123_000 ns = 123 μs
-	got, err := NormalizeUserValue(in, "timestamp")
-	if err != nil {
-		t.Fatalf("unexpected err: %v", err)
-	}
-	want := int64(1_700_000_000)*1_000_000 + 123
-	if got != want {
-		t.Fatalf("got %d, want %d", got, want)
+// Time-typed columns now round-trip as time.Time so sibling-read via ctx.Time
+// works. Output writers (csv format / parquet int64 μs / parquet int32 days)
+// convert to wire form at the boundary.
+func TestNormalizeTimeRoundTrip(t *testing.T) {
+	in := time.Unix(1_700_000_000, 123_000).UTC()
+	for _, sqlType := range []string{"timestamp", "datetime", "time"} {
+		got, err := NormalizeUserValue(in, sqlType)
+		if err != nil {
+			t.Fatalf("%s: unexpected err: %v", sqlType, err)
+		}
+		gotT, ok := got.(time.Time)
+		if !ok {
+			t.Fatalf("%s: got %T, want time.Time", sqlType, got)
+		}
+		if !gotT.Equal(in) {
+			t.Fatalf("%s: got %v, want %v", sqlType, gotT, in)
+		}
 	}
 }
 
-func TestNormalizeTimeToDateInt32(t *testing.T) {
+func TestNormalizeDateRoundTrip(t *testing.T) {
 	in := time.Date(1970, 1, 11, 0, 0, 0, 0, time.UTC)
 	got, err := NormalizeUserValue(in, "date")
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
-	if got != int32(10) {
-		t.Fatalf("got %v, want int32(10) (days since epoch)", got)
+	gotT, ok := got.(time.Time)
+	if !ok {
+		t.Fatalf("got %T, want time.Time", got)
+	}
+	if !gotT.Equal(in) {
+		t.Fatalf("got %v, want %v", gotT, in)
 	}
 }
 

@@ -46,20 +46,15 @@ func NormalizeUserValue(v any, sqlType string) (any, error) {
 		}
 		return x, nil
 
-	case "timestamp", "datetime", "time":
+	case "timestamp", "datetime", "time", "date":
 		t, ok := v.(time.Time)
 		if !ok {
 			return nil, fmt.Errorf("expected time.Time for %s, got %T", sqlType, v)
 		}
-		return t.UnixMicro(), nil
-
-	case "date":
-		t, ok := v.(time.Time)
-		if !ok {
-			return nil, fmt.Errorf("expected time.Time for date, got %T", v)
-		}
-		const secondsPerDay = 86400
-		return int32(t.UTC().Unix() / secondsPerDay), nil
+		// Store as time.Time so sibling-read via ctx.Time(col) works. Output
+		// writers (CSV format / parquet int64 μs / parquet int32 days) convert
+		// to their wire form at the last moment.
+		return t, nil
 
 	default:
 		return nil, fmt.Errorf("unsupported SQL type for user generator: %q", sqlType)

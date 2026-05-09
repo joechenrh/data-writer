@@ -9,6 +9,7 @@ import (
 
 	"dataWriter/src/config"
 	"dataWriter/src/spec"
+	_ "dataWriter/src/user"
 
 	"github.com/BurntSushi/toml"
 )
