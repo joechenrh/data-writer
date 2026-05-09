@@ -1,5 +1,8 @@
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
+/* Make the [hidden] attribute beat author rules like `.form-group { display:flex }`. */
+[hidden] { display: none !important; }
+
 :root {
   --bg: #f7f8fa;
   --surface: #ffffff;

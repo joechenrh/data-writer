@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Mockingbird</title>
-  <link rel="stylesheet" href="/style.css?v=43">
+  <link rel="stylesheet" href="/style.css?v=45">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/editor/editor.main.css">
   <script>
     var require = { paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs' } };
@@ -95,6 +95,18 @@
               <select id="format" name="format">
                 <option value="csv">CSV</option>
                 <option value="parquet">Parquet</option>
+                <option value="sql">SQL</option>
+              </select>
+            </div>
+            <div class="form-group" id="csv-compress-group">
+              <div class="label-row">
+                <label for="csv_compression">Compress</label>
+                <span class="help-icon-inline" data-tooltip="Compress CSV output. zstd offers ~2-3× faster decompression than gzip; gzip is more universally supported.">?</span>
+              </div>
+              <select id="csv_compression">
+                <option value="" selected>None</option>
+                <option value="zst">zstd</option>
+                <option value="gz">gzip</option>
               </select>
             </div>
           </div>
@@ -439,6 +451,6 @@ func CreatedAt(ctx *gen.Ctx) any {
     </div>
   </div>
 
-  <script src="/app.js?v=43"></script>
+  <script src="/app.js?v=45"></script>
 </body>
 </html>

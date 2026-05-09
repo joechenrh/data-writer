@@ -476,6 +476,13 @@ func GetSpecFromString(query string) ([]*ColumnSpec, error) {
 		spec.Order = NumericRandomOrder
 		spec.Compress = 100 // default no compression for data generation
 
+		// Honour the UNSIGNED modifier on integer columns. Without this every
+		// integer column was generated as if it were signed, so an UNSIGNED
+		// column could receive negative values that fail to import.
+		if mysql.HasUnsignedFlag(col.GetFlag()) {
+			spec.Signed = false
+		}
+
 		if !types.IsTypeNumeric(col.GetType()) && col.GetFlen() > 0 {
 			spec.TypeLen = min(col.GetFlen(), 64)
 		}

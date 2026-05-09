@@ -114,6 +114,14 @@ function updateCredFields() {
 // Initial sync.
 updateCredFields();
 
+// ── CSV compression visibility (only for CSV format) ──
+const csvCompressGroup = document.getElementById('csv-compress-group');
+function updateCsvCompressVisibility() {
+  if (csvCompressGroup) csvCompressGroup.hidden = formatSelect.value !== 'csv';
+}
+formatSelect.addEventListener('change', updateCsvCompressVisibility);
+updateCsvCompressVisibility();
+
 // ── Monaco SQL editor ──
 
 let sqlEditor = null;
@@ -227,11 +235,13 @@ function buildRequestBody() {
 
   // Format-specific options
   if (body.format === 'csv') {
+    const csvComp = document.getElementById('csv_compression').value;
     body.csv = {
       separator: document.getElementById('csv_separator').value || ',',
       endline: document.getElementById('csv_endline').value.replace(/\\n/g, '\n').replace(/\\r/g, '\r'),
       base64: document.getElementById('csv_base64').checked,
     };
+    if (csvComp) body.csv.compression = csvComp;
   } else {
     body.parquet = {
       compression: document.getElementById('parquet_compression').value || 'zstd',

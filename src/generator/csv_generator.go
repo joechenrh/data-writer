@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"math/rand"
-	"time"
 	"unsafe"
 
 	"dataWriter/src/config"
@@ -73,7 +72,14 @@ func newCSVGenerator(
 }
 
 func (g *CSVGenerator) FileSuffix() string {
-	return "csv"
+	switch g.cfg.CSV.Compression {
+	case "zst":
+		return "csv.zst"
+	case "gz":
+		return "csv.gz"
+	default:
+		return "csv"
+	}
 }
 
 func (g *CSVGenerator) GenerateFile(
@@ -82,7 +88,7 @@ func (g *CSVGenerator) GenerateFile(
 	fileNo int,
 ) error {
 	var (
-		rng        = rand.New(rand.NewSource(time.Now().UnixNano() + int64(rand.Intn(16))))
+		rng        = rand.New(rand.NewSource(seedForFile(fileNo)))
 		buffer     = make([]byte, 0, 64*units.KiB)
 		startRowID = fileNo * g.cfg.Common.Rows
 	)
@@ -112,7 +118,7 @@ func (g *CSVGenerator) GenerateFileStreaming(
 	chunkChannel chan<- *util.FileChunk,
 ) error {
 	var (
-		rng = rand.New(rand.NewSource(time.Now().UnixNano() + int64(rand.Intn(16))))
+		rng = rand.New(rand.NewSource(seedForFile(fileNo)))
 
 		startRowID = fileNo * g.cfg.Common.Rows
 		totalRows  = g.cfg.Common.Rows

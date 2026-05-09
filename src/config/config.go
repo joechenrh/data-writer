@@ -50,9 +50,10 @@ type ParquetConfig struct {
 }
 
 type CSVConfig struct {
-	Base64    bool   `toml:"base64" json:"base64"`
-	Separator string `toml:"separator,omitempty" json:"separator"`
-	EndLine   string `toml:"endline,omitempty" json:"endline"`
+	Base64      bool   `toml:"base64" json:"base64"`
+	Separator   string `toml:"separator,omitempty" json:"separator"`
+	EndLine     string `toml:"endline,omitempty" json:"endline"`
+	Compression string `toml:"compression,omitempty" json:"compression,omitempty"` // "zst" or "gz"; empty = none
 }
 
 type Config struct {
@@ -101,13 +102,21 @@ func Validate(cfg *Config) error {
 
 	format := strings.ToLower(strings.TrimSpace(cfg.Common.FileFormat))
 	switch format {
-	case "csv", "parquet":
+	case "csv", "parquet", "sql":
 	default:
-		errs = append(errs, "common.format must be csv or parquet")
+		errs = append(errs, "common.format must be csv, parquet, or sql")
 	}
 
 	if cfg.Common.ChunkSize != "" && cfg.Common.ChunkSizeBytes <= 0 {
 		errs = append(errs, "common.chunk_size must be greater than 0")
+	}
+
+	if format == "csv" && cfg.CSV.Compression != "" {
+		switch cfg.CSV.Compression {
+		case "zst", "gz":
+		default:
+			errs = append(errs, "csv.compression must be 'zst' or 'gz'")
+		}
 	}
 
 	if format == "parquet" {

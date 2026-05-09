@@ -220,9 +220,20 @@ func executeShardImpl(id int64, sqlText string, cfgJSON []byte, shard, shardTota
 	defer gen.Close()
 
 	// Periodically flush progress (delta-based, safe for concurrent shards).
+	// The tracker is shared with the final flush so the post-run delta is
+	// computed off the same lastFiles/lastBytes the periodic flush left it at.
+	tracker := &progressTracker{}
 	flushCtx, flushCancel := context.WithCancel(context.Background())
-	defer flushCancel()
-	go flushProgress(flushCtx, id)
+	flushDone := make(chan struct{})
+	go func() {
+		defer close(flushDone)
+		flushProgress(flushCtx, id, tracker)
+	}()
+	// Ensure the flusher always shuts down even on early returns.
+	defer func() {
+		flushCancel()
+		<-flushDone
+	}()
 
 	// Watchdog: poll task state in DB and cancel local context if it flips to
 	// 'failed' (e.g. via handleCancel from another process).
@@ -237,8 +248,10 @@ func executeShardImpl(id int64, sqlText string, cfgJSON []byte, shard, shardTota
 		return
 	}
 
-	// Final delta flush so the DB matches what this shard actually produced.
-	flushOnce(id)
+	// Stop the periodic flusher and wait for its final flush so the DB row
+	// reflects the full count before we mark the shard done.
+	flushCancel()
+	<-flushDone
 
 	// Mark this shard done; if it was the last one, transition to completed.
 	finalizeShard(id)
@@ -337,24 +350,19 @@ func (p *progressTracker) flushDelta(id int64) {
 	p.lastBytes = bytes
 }
 
-// flushProgress periodically pushes per-shard progress deltas to the DB.
-func flushProgress(ctx context.Context, id int64) {
-	tracker := &progressTracker{}
+// flushProgress periodically pushes per-shard progress deltas to the DB and,
+// on cancel, performs one final flush before returning so the caller can
+// rely on the DB row being up to date once this function exits.
+func flushProgress(ctx context.Context, id int64, tracker *progressTracker) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
+			tracker.flushDelta(id)
 			return
 		case <-ticker.C:
 			tracker.flushDelta(id)
 		}
 	}
-}
-
-// flushOnce drains any remaining progress delta into the DB. Used at shard
-// completion so the final values reflect everything this shard produced.
-func flushOnce(id int64) {
-	tracker := &progressTracker{}
-	tracker.flushDelta(id)
 }

@@ -97,6 +97,8 @@ func newGenerator(cfg *config.Config, specs []*spec.ColumnSpec) (FileGenerator, 
 		return newParquetGenerator(cfg, specs)
 	case "csv":
 		return newCSVGenerator(cfg, specs)
+	case "sql":
+		return newSQLGenerator(cfg, specs)
 	default:
 		return nil, errors.Errorf("unsupported file format: %s", cfg.Common.FileFormat)
 	}
@@ -127,14 +129,25 @@ func (o *Orchestrator) openWriter(
 			folderID, o.cfg.Common.Prefix, fileID, o.FileSuffix())
 	}
 
-	writer, err := o.store.Create(ctx, fileName, &storage.WriterOption{
+	raw, err := o.store.Create(ctx, fileName, &storage.WriterOption{
 		Concurrency: 8,
 	})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	return &writerWithStats{writer: writer, logger: o.logger}, nil
+	// Stats track on-disk bytes (compressed when applicable).
+	tracked := &writerWithStats{writer: raw, logger: o.logger}
+
+	if codec := o.cfg.CSV.Compression; codec != "" && strings.ToLower(o.cfg.Common.FileFormat) == "csv" {
+		cw, err := newCompressedWriter(tracked, codec)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return cw, nil
+	}
+
+	return tracked, nil
 }
 
 func (o *Orchestrator) Close() {
