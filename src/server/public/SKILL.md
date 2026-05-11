@@ -5,7 +5,7 @@ description: Generate CSV/Parquet/SQL test data via the data-writer (Mockingbird
 
 You have access to a data generation service at `https://datagen.ingresses.org`.
 
-This document is self-contained: every field, default, validation rule, and response shape below is verified against the current Mockingbird server code (`feature/user-go-generator` branch). You should not need to read source to create a task correctly.
+This document is self-contained: every field, default, validation rule, and response shape below is verified against the current Mockingbird server code on `main`. You should not need to read source to create a task correctly.
 
 ## When to use
 
@@ -70,9 +70,9 @@ Submit a task. The server inserts a row in `pending` state; an EC2 launcher (for
 | `rows` | int | `60000` (applied when omitted or `0`) | must be `> 0` |
 | `format` | string | `"csv"` | must be `"csv"`, `"parquet"`, or `"sql"` (case-insensitive) |
 | `folders` | int | `0` (single flat directory) | must be `>= 0`. When `>= 2`, files are sharded across `partNNNNN/` subdirs (5-digit zero-padded) by `fileID % folders`. `0` and `1` both produce a flat layout. |
-| `target` | string | `"local"` | any value other than `"ec2"` is treated as `"local"`. Use `"ec2"` for large jobs (EC2 spot workers in compute-dev account). |
+| `target` | string | `"local"` | any value other than `"ec2"` is treated as `"local"`. `"ec2"` runs the job on EC2 spot workers in the **compute-dev AWS account**. EC2 workers can only reach AWS S3 (compute-dev's own buckets by IAM, or other accounts via `s3.role_arn`); they **cannot** reach KsyunCloud (no `KSYUN_KEY` env, and the internal endpoint is unreachable from AWS) or local-filesystem paths. See "Choosing target + storage" below. |
 | `generators_go` | string | unset | Custom Go column generators. **Requires `target=ec2`.** Must parse as valid Go (server runs `go/parser`); for full build validation use `/api/validate-generators` first. With parquet output, `rows / row_groups <= 2_000_000` is enforced. See "Custom Go column generators" below. |
-| `ksyun` | bool | `false` | When `true`, server appends KSYUN credentials to `path` from the `KSYUN_KEY` env var. |
+| `ksyun` | bool | `false` | When `true`, the server appends `KSYUN_KEY` query params (credentials + internal endpoint) to `path`. **Must be used with `target=local`** — the EC2 workers don't have the env var and can't reach the Ksyun internal endpoint. |
 | `csv` | object | see below | only relevant when `format="csv"` |
 | `parquet` | object | see below | only relevant when `format="parquet"` |
 | `s3` | object | unset | mutually exclusive with `gcs`. Not needed for EC2 tasks against compute-dev S3 (IAM role). For cross-account S3, set `role_arn`. |
@@ -98,6 +98,22 @@ Submit a task. The server inserts a row in `pending` state; an EC2 launcher (for
 **`s3` object:** `region`, `access_key`, `secret_key`, `provider`, `endpoint`, `force` (force path-style), `role_arn` (cross-account assume).
 
 **`gcs` object:** `credential` (path to JSON key file on the worker).
+
+### Choosing target + storage
+
+`target` (where the work runs) and `path` (where the output lands) are **independent** but **not all combinations work**. Pick from this matrix:
+
+| Storage destination | `target` | `ksyun` | `path` | Other |
+|---------------------|----------|---------|--------|-------|
+| AWS S3, compute-dev account (own buckets) | `"ec2"` (preferred for ≥100 GB) **or** `"local"` | `false` | `s3://my-bucket/prefix` | EC2 uses IAM role; local needs creds in env / `s3` block / path query params |
+| AWS S3, **other** AWS account | `"ec2"` | `false` | `s3://their-bucket/prefix` | Owner provides a cross-account role; pass it as `s3.role_arn` |
+| KsyunCloud (KS3) | **`"local"` (required)** | **`true`** | `s3://ksyun-bucket/prefix` (the `s3://` scheme is correct — KS3 is S3-API-compat) | Server appends `KSYUN_KEY` automatically. Do **not** also pass `s3` block. |
+| GCS | `"local"` | `false` | `gcs://my-bucket/prefix` | Provide service-account JSON path via `gcs.credential` |
+| Local filesystem | `"local"` | `false` | `/abs/path` | Writes on the machine running mockingbird (the same one this API runs on). Don't use this for shared / multi-machine consumption. |
+
+**Common mistake — Ksyun + EC2:** if the user asks to "generate to 金山云 / Ksyun / KS3", the call is `target=local` + `ksyun=true`. `target=ec2` with `ksyun=true` will fail (silently or with a connection error) because EC2 workers in compute-dev cannot reach the Ksyun internal endpoint and have no `KSYUN_KEY`.
+
+**When in doubt about target:** if the storage matrix above allows `"local"`, default to `"local"`. Use `"ec2"` only for AWS S3 destinations where output size is large (≥100 GB) or where you want compute-dev's IAM to handle credentials.
 
 ### Server-forced behavior (not configurable via API)
 
@@ -404,6 +420,24 @@ curl -X POST https://datagen.ingresses.org/api/create \
     "target": "ec2"
   }'
 ```
+
+## Example: write to KsyunCloud (KS3)
+
+```bash
+curl -X POST https://datagen.ingresses.org/api/create \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "sql": "CREATE TABLE test.sbtest (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, k BIGINT NOT NULL DEFAULT 0, c CHAR(120) NOT NULL DEFAULT '\'''\'' COMMENT '\''max_length=120, min_length=120'\'');",
+    "path": "s3://my-ksyun-bucket/sysbench/",
+    "end_fileno": 100,
+    "rows": 60000,
+    "format": "csv",
+    "target": "local",
+    "ksyun": true
+  }'
+```
+
+Key differences from the AWS example: `target="local"` (required for Ksyun — EC2 workers can't reach KS3 internal endpoint) and `ksyun=true` (server injects credentials from its `KSYUN_KEY` env var into the path). Do NOT pass an `s3` block — `ksyun=true` is mutually understood as "use the configured Ksyun credentials".
 
 ## Example: custom Go generator (derived end_ts column)
 
